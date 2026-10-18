@@ -1,0 +1,25 @@
+{
+  "name": "connectivity-demo",
+  "enabled": false,
+  "title_include": [],
+  "title_exclude": [],
+  "notify_on_price_change": false,
+  "sources": {
+    "subito": {
+      "search_url": "https://www.subito.it/annunci-italia/vendita/usato/?q=sony+a6400",
+      "cron": "*/30 * * * *"
+    },
+    "vinted": {
+      "search_url": "https://www.vinted.it/catalog?search_text=sony+a6400",
+      "cron": "15,45 * * * *"
+    },
+    "wallapop": {
+      "search_url": "https://it.wallapop.com/app/search?keywords=camera&latitude=41.9&longitude=12.5&min_sale_price=0&max_sale_price=200&order_by=newest",
+      "cron": "10,40 * * * *"
+    },
+    "facebook": {
+      "enabled": false,
+      "search_url": "<unsupported; no automated Facebook fetching>"
+    }
+  }
+}

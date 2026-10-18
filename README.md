@@ -2,6 +2,33 @@
 
 A self-hosted, **modular** marketplace scraper.
 
+## Unified Marketplace Watch (this source branch)
+
+Subito, Vinted and Wallapop were live-fetched on this host; offline regression
+tests and controlled fixture-to-ntfy pushes are recorded in [docs/VALIDATION.md](docs/VALIDATION.md).
+Facebook is explicitly unsupported: no account/session automation is enabled.
+Android receipt still requires subscribing to the private topic and user confirmation.
+
+Use [docs/OPERATIONS.md](docs/OPERATIONS.md) for the verified source-local path,
+watch JSON schema/examples, start/stop, doctor, logs, backup and restore.
+Docker is optional and was unavailable on the validation host. No LLM or paid service
+is needed at runtime. Existing Docker commands below are retained for upstream users.
+
+```sh
+./marketwatch doctor
+./marketwatch watch add --from-json /path/to/watch.json
+./marketwatch watch list
+./marketwatch watch test 1
+./marketwatch serve
+```
+
+New queries default to **new-listing-only**; price changes are explicit opt-in via
+`notify_on_price_change`. Legacy queries retain their prior setting on migration.
+New-listing dedup is now durable by `(site, listing_id)` across different cron schedules.
+The first successfully scanning seeded group owns the alert; later groups record
+silently. Remote acceptance followed by a pre-commit crash remains at-least-once,
+not exactly-once. This supersedes the original same-heartbeat limitation below.
+
 > 🛠️ Add a site or channel: [`CONTRIBUTING.md`](./CONTRIBUTING.md) · 📐 Design & rationale:
 > [`SPEC.md`](./SPEC.md)
 
@@ -175,10 +202,10 @@ if the topic is access-controlled.
 current matches as a baseline. You get alerts from the next run onward, when something is
 new or changes price.
 
-**Will overlapping searches double-notify me?** No, as long as they run on the same
-schedule. If "iPhone in Veneto" and "iPhone in all Italy" both match an ad on the same
-run, only the first pings you; the other still records it silently. (Searches on
-*different* schedules can each ping once — put overlapping searches on the same cron.)
+**Will overlapping searches double-notify me?** New-listing events are now persisted
+globally by marketplace and listing ID, including across different schedules and normal
+restarts. The first successfully scanning seeded group sends; later matches are silent.
+Price-change opt-in keeps upstream per-query semantics.
 
 **What if the scheduler fires while a previous run is still going?** It's skipped — a
 built-in lock means a search never overlaps itself.

@@ -1,8 +1,12 @@
 .idea/
 .claude/settings.local.json
+.hermes/
 
 .env
 data/
+backups/
+sessions/
+*.cookies.json
 *.db
 *.db-wal
 *.db-shm

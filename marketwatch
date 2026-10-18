@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Source-local entry point; existing ./subitoo remains the Docker wrapper.
+set -euo pipefail
+umask 077
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+if [[ ! -x app/.venv/bin/python ]]; then
+    printf '%s\n' 'Missing app/.venv. See docs/OPERATIONS.md for source setup.' >&2
+    exit 1
+fi
+exec app/.venv/bin/python -m subitoo.cli "$@"

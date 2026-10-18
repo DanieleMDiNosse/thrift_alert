@@ -1,0 +1,110 @@
+# Marketplace feasibility and deployment-security research
+
+## Implementation follow-up (supersedes baseline-only runtime status below)
+
+This document is a pinned-upstream audit, not the final working-tree status. See
+[VALIDATION.md](VALIDATION.md) for subsequent live Subito/Vinted/Wallapop retrievals,
+controlled ntfy publication/read-back, watch groups, durable dedup and local scheduler.
+The local backend now supports ordinary Playwright Firefox and plugin secrets from
+.env; Docker and the original remote Camoufox stack remain unverified. Facebook is
+still unsupported. Wallapop reference commits/licenses are in
+[WALLAPOP.md](WALLAPOP.md): WallaPy `c122f73fb6a47137b64669454a71e6d148ba6b37`
+(Apache-2.0), wallapop-mcp `214001ef4697a55f8453ad3ee5c997bcd7d9663c` (MIT).
+
+## Decision and evidence boundary
+
+**Facebook is not implemented in subitoo and must remain unavailable for scheduled or manual live fetching in this work.** The third-party candidate is not a working drop-in adapter: its pinned source explicitly documents a broken Facebook search endpoint. No authorized manually authenticated Facebook session was supplied. No Facebook login, scraping, token bootstrap, challenge solving, proxy rotation, or protection-bypass experiment was performed.
+
+This is a source audit plus an offline regression check, not a production deployment or live marketplace certification. Only this research document is changed by this audit; services, credentials, real databases and schedules were not changed. Recommendations below are proposals, not installed controls.
+
+### Source identities
+
+Both remote default-branch HEADs were resolved with `git ls-remote <repository> HEAD` during this audit. These are snapshots, not promises that the branches will stay unchanged:
+
+| Source | Exact inspected commit | License evidence |
+|---|---|---|
+| [Kianda/subitoo](https://github.com/Kianda/subitoo/tree/4b8daeea325b87f79168ab7ba7cd9d594957bda4) | `4b8daeea325b87f79168ab7ba7cd9d594957bda4` — local HEAD matched remote HEAD | `LICENSE`: GNU GPL v3 text; `app/pyproject.toml:5`: `GPL-3.0-or-later` (README abbreviates this as GPLv3) |
+| [ethanashi/fbm-sniper-community](https://github.com/ethanashi/fbm-sniper-community/tree/1c460f99f7787b0d1ae9ab37699501c76611373f) | `1c460f99f7787b0d1ae9ab37699501c76611373f` — scratch clone HEAD matched remote HEAD | `LICENSE:1-13`: MIT, copyright 2026 FBM Sniper contributors; retain copyright and permission notice when reusing substantial portions |
+
+Local project root: `/home/danielemdn/Documents/repositories/thrift_alert/subitoo`. Third-party read-only research clone: `/home/danielemdn/.hermes/profiles/faraday/cache/scratch/fbm-audit-1c460f9`. No third-party code was installed or copied into production. MIT code can generally be incorporated into a GPL project with its notice preserved; this does not license platform data, grant account authorization, or resolve platform terms. This is not legal advice.
+
+## Existing architecture: what is actually present
+
+The inspected surfaces are `README.md`, `CONTRIBUTING.md`, `SPEC.md`, `LICENSE`, `.env.example`, both Compose files, both Dockerfiles, `browser/server.py`, `app/pyproject.toml`, `app/subitoo/{cli.py,config.py,registry.py}`, and the implementation/test paths cited below. The implementation is authoritative when prose differs.
+
+- **CLI and registry:** Typer entry point is `subitoo.cli:app` (`app/pyproject.toml:24-25`). `app/subitoo/registry.py` imports site/notifier package modules and registers decorated subclasses. The upstream registered site implementations are `sites/subito.py`, `sites/vinted.py`, `sites/autoscout24.py`; no Facebook adapter exists in the pinned upstream tree.
+- **Adapter contract:** `app/subitoo/sites/base.py` owns `validate_search`, optional add-time `resolve`, `fetch(search, ctx)`, browser requirement and the site-level `enabled` switch. Adapters return `Listing` objects (`core/models.py:20-33`); core, not adapters, owns filters, state and notifications. **`enabled=False` only blocks the dispatcher:** manual `run` and `dry_run` do not enforce it (`core/pipeline.py:77-85,109-120,219-227`). A future disabled Facebook stub would also need to reject live fetching inside `fetch`; a flag alone is not an authorization barrier.
+- **Fetch/browser:** `core/fetch.py` provides lazy `curl_cffi` HTTP sessions with Firefox impersonation and optional proxy, plus a Playwright Firefox client connecting to Camoufox. `BrowserClient.session` creates a **new non-persistent context for every session**, then closes it (`:119-128`); a warm browser process is not a persistent authenticated user profile. There is no provided Facebook manual-login/session-import contract. The page handle records request URLs, not Puppeteer/CDP POST bodies.
+- **Browser service:** `browser/server.py:51-71` launches Camoufox on `0.0.0.0:1234` with fixed default WS path `hello`; headed mode runs inside Xvfb by default. Both `browser/Dockerfile:36` and `app/pyproject.toml:21` pin Playwright `1.53.0`. Camoufox itself and its fetched browser build are not pinned in the Dockerfile. `SPEC.md:118-137` records historical compatibility with Camoufox 0.4.11; that is upstream evidence, not a fresh compatibility test here.
+- **Scheduler/pipeline:** Ofelia executes `subitoo run-due` each minute by default. Real query cron rules live in SQLite; due queries run sequentially with atomic query claims, watchdog recovery, optional per-query delay/jitter, universal filters, silent first-run seeding, then new/price-change notifications (`core/pipeline.py`). Successful sends are persisted afterward: at-least-once, not exactly-once. Cross-query suppression only spans one heartbeat. Fetch failure latches to `error` until explicit retry; the comment in `sites/subito.py:15-16` suggesting next-schedule retry is not the actual pipeline behavior.
+- **Storage:** `core/db.py` uses SQLite WAL, foreign keys and busy timeout. Authoritative schema is `app/subitoo/migrations/0001_init.sql` plus `0002_run_delay.sql`: queries/search/filter JSON, listings/raw JSON/last price, runs/errors and notification audit. Compose bind-mounts `./data:/data`; `.env.example` sets `DB_PATH=/data/subitoo.db`. No encryption or retention policy is implemented. Raw payloads may include personal or sensitive fields: `SPEC.md`'s “no PII” and “nothing sensitive touches the DB” are assumptions, not enforced sanitization guarantees.
+- **Notifiers:** `core/notify.py` selects one global channel. `notifiers/pushover.py` sends via HTTPS and optionally downloads then uploads images; `notifiers/ntfy.py` publishes title, query name, location, listing link and optional image link to a configurable server. Tests mock the transport. `config.py:37-48` reads plugin secrets from **process environment**, while typed Settings loads `.env`. Docker `env_file` supplies the process environment; a local CLI process must explicitly load/export plugin variables too—merely creating `.env` is insufficient for those namespaced secrets.
+
+## Capability matrix
+
+“Offline verified” means fixtures/fakes passed in the local suite, not that a live site accepted requests. “Not run” must not be read as failure or success.
+
+| Capability | Existing implementation / offline evidence | Live verification in this audit | Restrictions / uncertainty |
+|---|---|---|---|
+| Subito search | Browser warmup, add-time search API URL capture, per-page JSON replay; `sites/subito.py`; `tests/test_subito.py` fixture parser | Not run; browser service unavailable here | Consent/UI/API changes, login or challenges can prevent access; fixture proves parsing only |
+| Vinted search | Browserless HTTP catalog RSC payload; URL filters and pagination snapshot; `sites/vinted.py`, `tests/test_vinted.py` | Not run | Internal React format, regional availability and access controls can change; not the old REST implementation |
+| AutoScout24 search | Browserless HTML `__NEXT_DATA__`, pagination and dropped-parameter redirect check; `sites/autoscout24.py`, `tests/test_autoscout24.py` | Not run | Redirect check compares parameter names, not full semantics; no publication time, newest-first URL required |
+| Filters, seeding, dedup, cron, run recovery | `core/{filters,pipeline,db}.py`; `tests/test_{filters,universal_filters,pipeline,cron}.py` plus query tests | Offline suite passed | Not a load/concurrency/security proof; same-heartbeat dedup only; delays are not platform permission or comprehensive rate limiting |
+| Pushover / ntfy | Mocked notifier tests `tests/test_{pushover,ntfy}.py` passed | No real send | Credentials absent/not exercised; third-party alert disclosure and topic secrecy matter |
+| Docker stack / Camoufox WS | Compose/source reviewed | Not run: Docker executable absent | No image pull, build, container health, architecture compatibility or runtime isolation certification |
+| Third-party Facebook search/location | JS search and normalization code exists; source reviewed, **no behavioral test run** | Not run; no authorized session | Pinned source says endpoint broken; ephemeral guest bootstrap, internal tokens/doc IDs, anti-automation logic; not support-ready |
+| Facebook inside subitoo | **Not implemented in pinned upstream**; no fixture/adapter/live evidence | Prohibited in this scope | Must remain unavailable; do not convert missing auth, challenge or endpoint failure into a successful empty search |
+
+### Actual local check
+
+From the project root:
+
+```text
+command -v docker                         # no executable found
+command -v uv                             # /home/danielemdn/.local/bin/uv
+app/.venv/bin/python --version             # Python 3.12.3
+app/.venv/bin/python -m pytest -q -p no:cacheprovider app/tests
+# 107 passed in 0.16s
+```
+
+The existing Python 3.12 environment was used; no dependency install was needed. No `--live` run occurred. `CONTRIBUTING.md:63-64` and `SPEC.md:295` describe `pytest --live`, but the inspected `app/tests/conftest.py` defines no such option and `pyproject.toml` only declares the marker; documentation is not evidence of a working live-test harness. Current Subito tests call pure parsers rather than exercising actual browser capture. No npm install, Electron launch, scanner start or seeded sample data was used as evidence of working Facebook results.
+
+## Third-party Facebook feasibility: implementation versus README
+
+Pinned source references below are all under [commit `1c460f99f7787b0d1ae9ab37699501c76611373f`](https://github.com/ethanashi/fbm-sniper-community/tree/1c460f99f7787b0d1ae9ab37699501c76611373f).
+
+1. **Known broken, not just unverified.** [`STATUS.md:5-14`](https://github.com/ethanashi/fbm-sniper-community/blob/1c460f99f7787b0d1ae9ab37699501c76611373f/STATUS.md#L5-L14) says every platform fetch is broken, Facebook cars stopped working after an endpoint change, and Facebook electronics was never finished. [`lib/fb-scraper.js:24-29`](https://github.com/ethanashi/fbm-sniper-community/blob/1c460f99f7787b0d1ae9ab37699501c76611373f/lib/fb-scraper.js#L24-L29) explicitly labels `https://web.facebook.com/api/graphql/v2/` a placeholder whose real replacement is unknown. These statements are upstream's diagnosis, not an endpoint independently tested here. README feature claims must not override them.
+2. **Real search semantics exist in code.** `lib/scanner.js:200-210,433-458` resolves watch-specific coordinates before global config/defaults and watch radius before CLI/global fallback. It passes `watch.query`, `lat`, `lng`, radius, conditions, recency and page limit into `searchMarketplace`; configured major-unit prices are multiplied by 100. `lib/fb-scraper.js:200-304` sends `buyLocation`, `radiusKM`, price bounds, newest-first sort and filters, including overrides inside captured nested variables. Normalization converts price cents back to major units, preserves currency and maps ID/title/photos/location/time (`:634-772`). This is parameter wiring, **not proof of correct search results or geographic enforcement**.
+3. **Location defaults contradict marketing.** `lib/fb-config.js:14-18` and scanner defaults are Madrid; session discovery always visits a Madrid iPhone search (`lib/fb-session.js:263-268`). README says Dallas is the starter location, while sample data seeds Phoenix (`lib/seed-sample-data.js:188-189`). A prospective integration must require explicit validated coordinates/radius and verify returned geography; do not silently inherit any of these defaults. No geocoding or location lookup was required/performed in this audit.
+4. **No usable manual-login bridge was found.** README first-launch instructions say to log into Facebook in a browser, but `lib/fb-session.js:113-156` launches a fresh headless Puppeteer browser without `userDataDir`, stored-state import or an interactive-login wait; `:429-453` collects cookies, caches tokens/doc IDs in memory for 30 minutes, then closes the browser. `lib/fb-scraper.js:126-129` builds guest-style requests (`av=0`, `__user=0`). The README instruction does not establish an authenticated session path in the inspected implementation. `lib/shared-marketplace/workspace.js:14-29` has Vinted, Wallapop and Mercari snipers, **no Facebook entry**; `server.cjs:30-38` only wires the car scanner. No Facebook session was supplied to this audit.
+5. **Different dependencies/protocol.** `package.json` requires Node >=18 and lists Puppeteer ^24.40.0, puppeteer-extra ^3.3.6, stealth plugin ^2.11.2, Axios, Chalk, Day.js, Express and ws; Electron ^41.2.0 is a dev dependency and `package-lock.json` exists. The Facebook bootstrap actually imports plain `puppeteer`, not `puppeteer-extra`; installed stealth packages are not proof the plugin is active. It uses Chromium CDP monitoring, token/doc-ID extraction and direct Axios POST replay. Subitoo uses Python/Playwright/Firefox with URL-only capture and ephemeral contexts. This is a substantial rewrite or isolated sidecar, not a compatible Python plugin or Firefox/CDP swap.
+6. **Stealth/security behavior is a rejection signal, not a recipe.** The bootstrap disables Chromium sandboxing and automation signals, spoofs the user agent, changes webdriver properties, and scans scripts/network traffic for internal tokens/doc IDs (`fb-session.js:122-214`). Optional proxy configuration and rate-limit retry exist (`fb-config.js`, `fb-scraper.js:331-347`); the bootstrap hardcodes headless mode despite example env knobs. None was executed or recommended for adoption. Protection errors must stop the integration, not trigger identity/proxy changes or challenge bypass.
+7. **Source quality and privacy gaps.** The scraper's “omit auth cookies” detail-fetch comment contradicts its actual `cookie` header (`fb-scraper.js:442-460`). Seller identities and raw detail can be retained (`:618-624,671-679`). `STATUS.md` is dated 2026-05-16 and is not fresh live evidence. `package.json`'s `check` script is syntax checking, not integration tests. No independent Facebook fixture-based behavioral suite or current authorized live result was established.
+
+### Conditions for reconsideration (not implemented)
+
+Require explicit owner authorization and platform-permitted access; assess current terms and data-processing obligations independently of the MIT license. A human must log in through an approved manual flow; do not collect passwords, export unrelated browser cookies or reuse the existing shared browser as an implied Facebook authorization. Isolate any future authenticated profile/state from public scrapers with restrictive permissions and a revocation/deletion path. First obtain a redacted authorized fixture and build offline tests for IDs, currencies, nullable shipping, pagination, explicit location, login/challenge detection and error propagation. Keep live transport unimplemented until authorization and a permitted stable access path are demonstrated. A scheduler flag must be supplemented by a hard fetch-time guard so manual invocations cannot bypass it. Stop on login walls, restrictions, rate limits and challenges; do not search for alternate endpoints or stealth workarounds in this task.
+
+## Existing deployment security findings
+
+These describe the **pinned upstream defaults**, not proof of a running host compromise. Current working-tree changes by other workstreams may supersede them.
+
+| Priority | Evidence / exposure | Safer direction (not applied) |
+|---|---|---|
+| High | Both Compose files mount `/var/run/docker.sock` into Ofelia (`docker-compose.yml:29-38`, `docker-compose.dev.yml:27-36`). The `:ro` filesystem mount does **not** make Docker API calls read-only; this scheduler needs exec capability. On a normal rootful daemon, socket access can grant host-level control. | Prefer an unprivileged local user cron/systemd timer invoking the local CLI directly, with **no Docker socket**. Otherwise isolate/rootless daemon and narrowly authorize required API operations; do not describe a read-only bind as least-privilege authorization. |
+| High if exposed | Browser server binds all container interfaces with predictable unauthenticated `ws://...:1234/hello` (`browser/server.py:58-62`). Compose does not publish host ports, which is useful, but the default bridge is not an authenticated or egress-isolated security boundary. | Never publish this endpoint publicly or to LAN; restrict network membership. A local-only server should bind loopback; remote use requires authenticated transport/access controls. Keep future authenticated profiles separate. |
+| Medium | Both Dockerfiles have no `USER`; Compose defines no non-root user, capability drop, `no-new-privileges` or read-only root filesystem. Browser consumes untrusted remote content. | Test a dedicated UID/GID, restricted filesystem/data ownership, dropped capabilities and compatible browser sandboxing. Do not copy the third party's `--no-sandbox` flags. No claim is made that all browsers work unchanged with these controls. |
+| Medium | Mutable image tags (`SUBITOO_VERSION` example is `2`, fallback `latest`; Ofelia always `latest`), `python:3.12-slim`, floating Python/Camoufox deps and fetched browser binary. `start.sh` pulls on start. | Pin reviewed image digests for reproducible deployment, preserve matched Playwright client/server versions, record dependency/browser versions and update intentionally. Source SHA alone does not establish the running image's identity. No vulnerability scan or image-signature verification was performed. |
+| Medium | `.env` is ignored by Git but loaded into the app environment; proxy credentials can enter browser env. `start.sh:10-13` copies the example without setting restrictive permissions. Errors/logs/DB may retain response fragments. | Owner-only env/session files and data directories; avoid logging URLs with credentials/tokens; back up SQLite consistently including WAL considerations; restrict/encrypt backups and define retention. Git ignore is not encryption or access control. No real `.env` or secret content was inspected. |
+| Medium | On public ntfy, the topic is the access secret (`README.md:167-170`, `notifiers/ntfy.py:19-20`); notification content is disclosed to the chosen provider. `NTFY_URL` can be plain HTTP and carries any bearer token. | Use an authenticated/private topic or self-hosted ACLs with HTTPS; keep topic/token out of shared logs; minimize listing/location/query data. Mocked delivery tests are not proof of private or successful push delivery. |
+| Medium / trust-boundary risk | Pushover `_fetch_image` downloads arbitrary listing-provided URLs (`notifiers/pushover.py:20-32`) with no hostname/private-address policy, and checks size only **after** reading content. URL ownership checks in `sites/base.py:62-84` are not general SSRF defenses; imported Subito `api_url` bypasses capture (`sites/subito.py:240-247`). | Treat imports, response URLs and plugins as trusted local inputs only until scheme/host/redirect/IP checks, bounded streaming downloads and egress rules are designed and tested. Do not promote this CLI as safe for untrusted multi-user URL submission. No SSRF exploit was attempted. |
+
+### Safer local scheduling alternative
+
+A proposal, **not a crontab installed by this audit**: run the existing Python CLI once per minute under a dedicated non-root user via cron or a systemd user timer, with an external `flock` so complete heartbeats do not overlap. Use the absolute executable `/home/danielemdn/Documents/repositories/thrift_alert/subitoo/app/.venv/bin/subitoo run-due`, a fixed working directory, an explicit writable `DB_PATH` outside `/data`, explicit `TZ`, and owner-only logs/config. Export only necessary notifier variables from an owner-only, operator-reviewed environment file; `Settings.for_plugin` does not import them from dotenv automatically. Do not blindly shell-source an untrusted dotenv file. Keep lock and logs in private user-owned directories. The documented `./subitoo` wrapper still calls Docker and is **not** the local executable.
+
+Browserless Vinted/AutoScout24 can use that topology without Docker; Subito still requires a separately provisioned compatible browser service. If one is authorized later, bind it to loopback and explicitly set the matching local `BROWSER_WS_URL`; changing scheduler alone does not make Subito browserless. This removes scheduler Docker-socket exposure, not all network/content risks. No local scheduler, browser server, real query or notification was started.
+
+## Remaining uncertainty
+
+No current marketplace access, account authorization, production permissions, running network topology, image contents, third-party dependency advisories or notification delivery was verified. Offline regression success is limited to the pinned baseline and installed Python environment. `SPEC.md:208` still describes Vinted as an API adapter, whereas the current source uses catalog RSC; source comments and README historical claims must be checked against code before relying on them. Reassess this document against exact source SHAs and actual deployed image digests after any implementation or deployment change.
