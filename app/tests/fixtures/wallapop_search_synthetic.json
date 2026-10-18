@@ -1,0 +1,8 @@
+{
+  "_fixture_note": "SYNTHETIC: authored from the reference repositories' v3 response schema, not a live capture. All listings are fictional.",
+  "data": {"section": {"payload": {"items": [
+    {"id": "synthetic-1", "title": "Synthetic camera", "web_slug": "synthetic-camera-1", "price": {"amount": 125.5, "currency": "EUR"}, "images": [{"urls": {"big": "https://example.invalid/camera.jpg"}}], "location": {"city": "Roma"}, "created_at": 1700000000000, "shipping": {"allowed": true}},
+    {"id": "synthetic-2", "title": "Synthetic lens", "web_slug": "synthetic-lens-2", "price": {"amount": 0, "currency": "EUR"}, "images": []}
+  ]}}},
+  "meta": {"next_page": "opaque+/=cursor"}
+}
