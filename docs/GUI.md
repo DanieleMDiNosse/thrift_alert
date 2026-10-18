@@ -22,18 +22,25 @@ secondo scheduler. Non sono stati installati nuovi servizi di sistema.
 
 ## Uso quotidiano
 
-1. Premi «Nuova ricerca» e assegna un nome riconoscibile.
-2. Apri ogni marketplace, imposta la ricerca e copia il suo URL; preferisci l'ordine
-   dal più recente. Incolla un URL distinto per Subito, Vinted e/o Wallapop.
-3. Imposta, se servono, prezzo minimo/massimo in euro e parole incluse/escluse,
-   una voce per riga. Tutte le parole incluse sono richieste; basta una esclusa per
-   scartare il titolo. Nessuna conversione automatica di valuta.
-4. Salva. Usa «Attiva» o «Metti in pausa» per controllare le scansioni. La prima
-   scansione riuscita crea una baseline silenziosa, senza inviare tutti gli annunci.
-5. «Modifica» riapre lo stesso modulo. Cambiare URL o filtri ricrea una baseline
-   silenziosa per le sorgenti modificate; una semplice pausa conserva lo storico.
-6. «Elimina» chiede conferma. Cancella il gruppo e le relative query, non il registro
-   globale di deduplicazione.
+1. Premi «Nuova ricerca».
+2. Scrivi cosa vuoi cercare, ad esempio «Sony a6400».
+3. Indica il prezzo minimo e/o massimo in euro, se desideri un limite.
+4. Premi «Salva ricerca». L'app crea automaticamente le ricerche su Subito, Vinted
+   e Wallapop: non devi aprire i siti o incollare URL.
+5. Usa «Attiva» / «Metti in pausa» per controllare le scansioni. La prima scansione
+   riuscita crea una baseline silenziosa, senza inviare tutti gli annunci esistenti.
+6. «Modifica» riapre prodotto e prezzi. Cambiare prodotto o filtri ricrea una baseline
+   silenziosa; una semplice pausa conserva lo storico. «Elimina» chiede conferma.
+
+Le «Opzioni avanzate» sono facoltative: scelta dei mercatini, frequenza, parole da
+escludere e, soltanto se serve, URL personalizzati. Le ricerche precedenti create
+con URL restano in modalità personalizzata per non alterarne i filtri originali.
+
+La ricerca semplice richiede tutte le parole del prodotto nel titolo, per limitare
+risultati vaghi o riempitivi dei siti. I prezzi sono applicati anche dal filtro comune;
+non viene fatta conversione di valuta. Wallapop richiede tecnicamente un punto di
+riferimento: viene usata l'Italia centrale senza raggio imposto, non la tua posizione.
+Possono comparire annunci esteri; non viene garantita la spedizione in Italia.
 
 Gli «Annunci osservati» includono la baseline e non significano necessariamente
 «appena pubblicati» o «già notificati». La pagina legge SQLite e si aggiorna senza

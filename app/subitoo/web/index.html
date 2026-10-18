@@ -24,13 +24,16 @@
       <div class="dialog-header"><div><p class="eyebrow">UNA RICERCA, PIÙ MERCATINI</p><h2 id="dialog-title">Nuova ricerca</h2></div><button type="button" id="close-dialog" class="icon-button" aria-label="Chiudi finestra">×</button></div>
       <div class="dialog-body">
         <div id="form-error" class="error-banner" role="alert" hidden></div>
-        <label for="watch-name">Nome della ricerca</label><input id="watch-name" name="name" required maxlength="120" placeholder="Es. Una nuova bici per la città" autocomplete="off">
-        <label class="check-label watch-enabled"><input type="checkbox" id="watch-enabled" checked> Ricerca attiva <span class="muted">— monitora le fonti abilitate</span></label>
+        <div id="query-field"><label for="search-text">Cosa vuoi cercare?</label><input id="search-text" required maxlength="120" placeholder="Es. Sony a6400, bicicletta elettrica…" autocomplete="off"><p class="field-help" id="auto-search-help">Bastano il prodotto e il prezzo. Cerchiamo su Subito, Vinted e Wallapop senza chiederti link.</p></div>
+        <label class="check-label watch-enabled"><input type="checkbox" id="watch-enabled" checked> Ricerca attiva <span class="muted">— cerca nuovi annunci in automatico</span></label>
         <fieldset><legend>Fascia di prezzo <span class="optional">facoltativa</span></legend><div class="two-columns"><div><label for="min-price">Minimo (€)</label><input type="number" id="min-price" min="0" step="0.01" placeholder="Nessun minimo"></div><div><label for="max-price">Massimo (€)</label><input type="number" id="max-price" min="0" step="0.01" placeholder="Nessun massimo"></div></div></fieldset>
-        <fieldset><legend>Mercatini</legend><p class="field-help">Incolla l’URL di una ricerca già filtrata sul sito. Puoi mettere in pausa una fonte senza perdere il link.</p><div id="source-fields"></div><div id="preserved-sources" class="field-help" hidden></div></fieldset>
+        <details id="advanced-options"><summary>Opzioni avanzate</summary>
+        <label class="check-label"><input id="custom-urls" type="checkbox"> Usa URL personalizzati anziché la ricerca automatica</label>
+        <div id="manual-name" hidden><label for="watch-name">Nome della ricerca</label><input id="watch-name" name="name" maxlength="120" autocomplete="off"></div>
+        <fieldset><legend>Mercatini e frequenza</legend><p class="field-help">Puoi scegliere dove cercare. Gli URL servono solo nella modalità personalizzata. Wallapop usa un punto di riferimento in Italia centrale, senza raggio imposto: possono comparire annunci esteri.</p><div id="source-fields"></div><div id="preserved-sources" class="field-help" hidden></div></fieldset>
         <fieldset><legend>Parole nel titolo <span class="optional">facoltative</span></legend><div class="two-columns"><div><label for="include-words">Da includere</label><textarea id="include-words" rows="3" placeholder="Una parola o frase per riga"></textarea></div><div><label for="exclude-words">Da escludere</label><textarea id="exclude-words" rows="3" placeholder="Una parola o frase per riga"></textarea></div></div></fieldset>
-        <details><summary>Opzioni avanzate</summary><label class="check-label"><input id="price-change" type="checkbox"> Avvisami anche se cambia il prezzo</label></details>
-        <p class="field-help reseed-note">Se modifichi URL o filtri, la prima scansione crea una nuova base di confronto senza inviare notifiche per gli annunci già presenti.</p>
+        <label class="check-label"><input id="price-change" type="checkbox"> Avvisami anche se cambia il prezzo</label></details>
+        <p class="field-help reseed-note">La prima ricerca registra gli annunci già presenti. Ti avviseremo per quelli nuovi.</p>
       </div>
       <div class="dialog-footer"><button type="button" id="cancel-dialog" class="secondary">Annulla</button><button type="submit" id="save-watch" class="primary">Salva ricerca</button></div>
     </form>

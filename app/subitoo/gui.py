@@ -203,7 +203,7 @@ class GUIHandler(BaseHTTPRequestHandler):
             self._reply(503, {'error': 'Operazione non riuscita. Controlla la configurazione locale e riprova.'})
 
     def _action(self, conn, data):
-        if self.path == '/api/watches/save':
+        if self.path in ('/api/watches/save', '/api/watches/quick-save'):
             spec = dict(data)
             watch_id = spec.pop('id', None)
             if watch_id is not None:
@@ -211,6 +211,9 @@ class GUIHandler(BaseHTTPRequestHandler):
                     raise ValueError('ID non valido')
                 if not conn.execute('SELECT 1 FROM watches WHERE id=?', (watch_id,)).fetchone():
                     raise LookupError
+            if self.path == '/api/watches/quick-save':
+                from subitoo.core.searches import build_watch
+                spec = build_watch(spec)
             return {'id': watches.save(conn, spec, watch_id=watch_id)}
         match = re.fullmatch(r'/api/watches/([1-9][0-9]*)/(toggle|remove)', self.path)
         if match:

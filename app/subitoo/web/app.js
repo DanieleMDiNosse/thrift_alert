@@ -177,6 +177,15 @@
       }, 'text-button listing-more'));
     }
   }
+  function setSearchMode() {
+    const manual = $('custom-urls').checked;
+    $('query-field').hidden = manual;
+    $('search-text').required = !manual;
+    $('manual-name').hidden = !manual;
+    $('watch-name').required = manual;
+    document.querySelectorAll('.custom-url-field').forEach((element) => { element.hidden = !manual; });
+  }
+  $('custom-urls').addEventListener('change', setSearchMode);
   function openEditor(watch = null) {
     returnFocus = document.activeElement;
     editing = watch ? JSON.parse(JSON.stringify(watch)) : null;
@@ -184,20 +193,23 @@
     $('form-error').hidden = true;
     $('dialog-title').textContent = watch ? 'Modifica ricerca' : 'Nuova ricerca';
     $('watch-name').value = watch?.name || '';
+    $('search-text').value = watch?.search_text || watch?.name || '';
+    $('custom-urls').checked = Boolean(watch && !watch.search_text);
     $('watch-enabled').checked = watch ? Boolean(watch.enabled) : true;
     $('min-price').value = watch?.min_price_eur ?? '';
     $('max-price').value = watch?.max_price_eur ?? '';
-    $('include-words').value = (watch?.title_include || []).join('\n');
+    const automatic = new Set((watch?.search_text || '').split(/\s+/).filter(Boolean));
+    $('include-words').value = (watch?.title_include || []).filter((word) => !automatic.has(word)).join('\n');
     $('exclude-words').value = (watch?.title_exclude || []).join('\n');
     $('price-change').checked = Boolean(watch?.notify_on_price_change);
-    $('watch-form').querySelector('details').open = false;
+    $('advanced-options').open = $('custom-urls').checked;
     const fields = sites.map((site) => {
       const source = watch?.sources?.[site];
       const box = node('div', undefined, 'source-editor');
       const heading = node('div', undefined, 'source-editor-heading');
       const label = node('label', undefined, 'check-label');
       const enabled = node('input');
-      enabled.type = 'checkbox'; enabled.id = `source-${site}`; enabled.checked = source ? Boolean(source.enabled) : true;
+      enabled.type = 'checkbox'; enabled.id = `source-${site}`; enabled.checked = source ? Boolean(source.enabled) : !watch;
       label.append(enabled, document.createTextNode(names[site]));
       const select = node('select'); select.id = `cron-${site}`; select.setAttribute('aria-label', `Frequenza scansione ${names[site]}`);
       for (const [value, text] of schedules) { const option = node('option', text); option.value = value; select.append(option); }
@@ -207,15 +219,18 @@
       heading.append(label, select);
       const urlLabel = node('label', `URL ricerca ${names[site]}`); urlLabel.htmlFor = `url-${site}`;
       const input = node('input'); input.type = 'url'; input.id = `url-${site}`; input.value = source?.search_url || ''; input.placeholder = `https://… · ricerca ${names[site]}`; input.autocomplete = 'off';
-      box.append(heading, urlLabel, input);
+      const urlField = node('div', undefined, 'custom-url-field');
+      urlField.append(urlLabel, input);
+      box.append(heading, urlField);
       return box;
     });
     $('source-fields').replaceChildren(...fields);
     const preserved = Object.keys(watch?.sources || {}).filter((site) => !sites.includes(site));
     $('preserved-sources').hidden = !preserved.length;
     $('preserved-sources').textContent = preserved.length ? `Fonti non modificabili da questa pagina, mantenute invariate: ${preserved.join(', ')}.` : '';
+    setSearchMode();
     $('watch-dialog').showModal();
-    $('watch-name').focus();
+    ($('custom-urls').checked ? $('watch-name') : $('search-text')).focus();
   }
   function closeEditor() { if (!$('save-watch').disabled) $('watch-dialog').close(); }
   $('new-watch').addEventListener('click', () => openEditor());
@@ -231,25 +246,35 @@
     const min = $('min-price').value === '' ? null : Number($('min-price').value);
     const max = $('max-price').value === '' ? null : Number($('max-price').value);
     try {
-      const name = $('watch-name').value.trim();
-      if (!name) throw new Error('Dai un nome alla ricerca.');
+      const manual = $('custom-urls').checked;
+      const query = $('search-text').value.trim();
+      const name = manual ? $('watch-name').value.trim() : query;
+      if (!name) throw new Error(manual ? 'Dai un nome alla ricerca.' : 'Scrivi cosa vuoi cercare.');
       if (min !== null && max !== null && min > max) throw new Error('Il prezzo minimo non può superare il massimo.');
-      const sources = {...(editing?.sources || {})};
+      const sources = manual ? {...(editing?.sources || {})} : {};
       for (const site of sites) {
         const existing = editing?.sources?.[site];
+        if (!manual) {
+          // An absent source in an existing quick watch stays absent unless selected.
+          sources[site] = {enabled: $(`source-${site}`).checked, cron: $(`cron-${site}`).value, max_pages: existing?.max_pages ?? 1};
+          continue;
+        }
         const url = $(`url-${site}`).value.trim();
         if (!url) { delete sources[site]; continue; }
         if (!safeURL(url)) throw new Error(`Inserisci un URL http o https valido per ${names[site]}.`);
         sources[site] = {...existing, search_url: url, enabled: $(`source-${site}`).checked, cron: $(`cron-${site}`).value, max_pages: existing?.max_pages ?? 1};
       }
-      if (!Object.values(sources).some((source) => safeURL(source.search_url))) {
+      if (manual && !Object.values(sources).some((source) => safeURL(source.search_url))) {
         throw new Error('Incolla almeno un URL di ricerca da un mercatino.');
       }
-      const payload = {name, enabled: $('watch-enabled').checked, min_price_eur: min, max_price_eur: max, title_include: terms('include-words'), title_exclude: terms('exclude-words'), notify_on_price_change: $('price-change').checked, sources};
+      if (!manual && !Object.values(sources).some((source) => source.enabled)) throw new Error('Seleziona almeno un mercatino nelle opzioni avanzate.');
+      const payload = {enabled: $('watch-enabled').checked, min_price_eur: min, max_price_eur: max, title_include: terms('include-words'), title_exclude: terms('exclude-words'), notify_on_price_change: $('price-change').checked, sources};
+      if (manual) { payload.name = name; payload.search_text = null; }
+      else payload.query = query;
       if (editing) payload.id = editing.id;
       $('save-watch').disabled = true;
       $('save-watch').textContent = 'Salvataggio…';
-      await request('/api/watches/save', payload);
+      await request(manual ? '/api/watches/save' : '/api/watches/quick-save', payload);
       const verified = await refresh();
       $('watch-dialog').close();
       toast(verified ? 'Ricerca salvata.' : 'Ricerca inviata. Stato non aggiornato: verifica prima di riprovare.');
