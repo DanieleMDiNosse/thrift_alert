@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="__CSRF_TOKEN__">
+  <meta name="color-scheme" content="light">
+  <title>Marketwatch · Le tue ricerche</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><div class="topbar-inner"><a class="brand" href="/" aria-label="Marketwatch, pagina principale"><span class="brand-mark" aria-hidden="true">m.</span> marketwatch<span class="local-label">LOCALE</span></a><span id="monitor-status" class="status"><span class="status-dot" aria-hidden="true"></span><span id="monitor-label">Connessione…</span></span></div></header>
+  <main>
+    <section class="page-heading"><div><p class="eyebrow">IL TUO PROSSIMO AFFARE, SENZA INSEGUIRLO</p><h1>Le tue ricerche</h1><p class="subtitle">I mercatini che segui, tutti in un posto. Ti avvisiamo quando c’è qualcosa per te.</p></div><button class="primary" id="new-watch" type="button"><span aria-hidden="true">＋</span> Nuova ricerca</button></section>
+    <p id="monitor-help" class="notice" hidden>Il monitor non è attivo. Per avviarlo, esegui <code>./marketwatch serve</code> nel terminale. Questa pagina non avvia il monitor.</p>
+    <div id="load-error" class="error-banner" role="alert" hidden></div>
+    <section aria-label="Ricerche salvate"><div id="watches" class="watch-grid" aria-busy="true"><p class="muted">Caricamento delle ricerche…</p></div></section>
+    <section class="listings-section" aria-labelledby="listings-title"><div class="section-heading"><div><h2 id="listings-title">Annunci osservati</h2><p class="muted">Gli ultimi annunci incontrati, inclusi quelli della prima scansione.</p></div><span class="quiet-label">Aggiornamento ogni 30 s</span></div><div id="listings" class="listings-panel"><p class="empty-copy">Caricamento degli annunci…</p></div></section>
+    <footer><span>Solo sul tuo computer. Nessuna immagine esterna caricata.</span><div class="notification-controls"><span id="notification-label">Notifiche…</span><button id="test-notify" class="text-button" type="button" disabled>Prova notifica</button></div></footer>
+  </main>
+  <dialog id="watch-dialog" aria-labelledby="dialog-title">
+    <form id="watch-form">
+      <div class="dialog-header"><div><p class="eyebrow">UNA RICERCA, PIÙ MERCATINI</p><h2 id="dialog-title">Nuova ricerca</h2></div><button type="button" id="close-dialog" class="icon-button" aria-label="Chiudi finestra">×</button></div>
+      <div class="dialog-body">
+        <div id="form-error" class="error-banner" role="alert" hidden></div>
+        <label for="watch-name">Nome della ricerca</label><input id="watch-name" name="name" required maxlength="120" placeholder="Es. Una nuova bici per la città" autocomplete="off">
+        <label class="check-label watch-enabled"><input type="checkbox" id="watch-enabled" checked> Ricerca attiva <span class="muted">— monitora le fonti abilitate</span></label>
+        <fieldset><legend>Fascia di prezzo <span class="optional">facoltativa</span></legend><div class="two-columns"><div><label for="min-price">Minimo (€)</label><input type="number" id="min-price" min="0" step="0.01" placeholder="Nessun minimo"></div><div><label for="max-price">Massimo (€)</label><input type="number" id="max-price" min="0" step="0.01" placeholder="Nessun massimo"></div></div></fieldset>
+        <fieldset><legend>Mercatini</legend><p class="field-help">Incolla l’URL di una ricerca già filtrata sul sito. Puoi mettere in pausa una fonte senza perdere il link.</p><div id="source-fields"></div><div id="preserved-sources" class="field-help" hidden></div></fieldset>
+        <fieldset><legend>Parole nel titolo <span class="optional">facoltative</span></legend><div class="two-columns"><div><label for="include-words">Da includere</label><textarea id="include-words" rows="3" placeholder="Una parola o frase per riga"></textarea></div><div><label for="exclude-words">Da escludere</label><textarea id="exclude-words" rows="3" placeholder="Una parola o frase per riga"></textarea></div></div></fieldset>
+        <details><summary>Opzioni avanzate</summary><label class="check-label"><input id="price-change" type="checkbox"> Avvisami anche se cambia il prezzo</label></details>
+        <p class="field-help reseed-note">Se modifichi URL o filtri, la prima scansione crea una nuova base di confronto senza inviare notifiche per gli annunci già presenti.</p>
+      </div>
+      <div class="dialog-footer"><button type="button" id="cancel-dialog" class="secondary">Annulla</button><button type="submit" id="save-watch" class="primary">Salva ricerca</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

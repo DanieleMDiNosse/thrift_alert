@@ -576,6 +576,29 @@ def query_test(query_id: int) -> None:
 
 # --------------------------------------------------------------------- running
 
+@app.command("gui")
+def cmd_gui(port: int = typer.Option(8787, min=1, max=65535),
+            open_browser: bool = typer.Option(True, "--open-browser/--no-open-browser")) -> None:
+    """Apri l'interfaccia grafica locale; il monitor resta un processo separato."""
+    import webbrowser
+    from subitoo.gui import make_server
+    try:
+        server = make_server(port=port)
+    except OSError:
+        console.print("[red]Porta non disponibile.[/red] Prova --port con un altro numero.")
+        raise typer.Exit(1) from None
+    url = f"http://127.0.0.1:{port}"
+    console.print(f"Marketplace Watch: {url} — solo locale. Ctrl-C per chiudere la GUI.")
+    if open_browser:
+        webbrowser.open(url)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
 @app.command("serve")
 def cmd_serve(interval: int = typer.Option(60, min=60)) -> None:
     """Run a local heartbeat without Docker, Ofelia, or a Docker socket."""

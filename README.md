@@ -9,6 +9,10 @@ tests and controlled fixture-to-ntfy pushes are recorded in [docs/VALIDATION.md]
 Facebook is explicitly unsupported: no account/session automation is enabled.
 Android receipt still requires subscribing to the private topic and user confirmation.
 
+Prefer a graphical interface? Run `./marketwatch gui` to open the simple Italian
+local dashboard at http://127.0.0.1:8787. Manage watches without editing JSON; see
+[docs/GUI.md](docs/GUI.md). The GUI reuses the existing monitor, not a second scheduler.
+
 Use [docs/OPERATIONS.md](docs/OPERATIONS.md) for the verified source-local path,
 watch JSON schema/examples, start/stop, doctor, logs, backup and restore.
 Docker is optional and was unavailable on the validation host. No LLM or paid service
