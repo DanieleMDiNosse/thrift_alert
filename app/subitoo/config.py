@@ -41,9 +41,11 @@ class Settings(BaseSettings):
         a site ``vinted`` gets any VINTED_* vars. Core never hard-codes these.
         """
         prefix = f"{key.upper()}_"
+        from dotenv import dotenv_values
+        file_values = dotenv_values(self.model_config.get("env_file") or ".env")
         out: dict[str, str] = {}
-        for env_key, value in os.environ.items():
-            if env_key.startswith(prefix):
+        for env_key, value in {**file_values, **os.environ}.items():
+            if env_key.startswith(prefix) and value is not None:
                 out[env_key[len(prefix):].lower()] = value
         return out
 

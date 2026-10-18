@@ -64,7 +64,10 @@ class BaseSite(ABC):
         """Whether this adapter handles that search URL (see ``url_host_pattern``)."""
         if not cls.url_host_pattern:
             return False
-        return bool(re.search(cls.url_host_pattern, urlsplit(url).netloc))
+        parts = urlsplit(url)
+        return bool(parts.scheme in ("http", "https") and not parts.username
+                    and not parts.password and parts.port in (None, 80, 443)
+                    and re.search(cls.url_host_pattern, parts.hostname or ""))
 
     def validate_search(self, search: dict[str, Any]) -> dict[str, Any]:
         """Optional: validate/normalize the user's search blob at CRUD time.

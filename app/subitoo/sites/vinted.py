@@ -205,11 +205,14 @@ def parse_items(payload: dict[str, Any], root: str = "https://www.vinted.it/") -
     out: list[Listing] = []
     for wrapper in payload.get("items") or []:
         if not isinstance(wrapper, dict):
-            continue
+            raise RuntimeError("vinted: malformed item wrapper")
         product = wrapper.get("productItem")
         if not isinstance(product, dict):
-            continue
-        out.append(parse_item(product, root))
+            raise RuntimeError("vinted: missing product item")
+        item = parse_item(product, root)
+        if not item.site_listing_id or not item.title or not item.url:
+            raise RuntimeError("vinted: invalid listing identity/title/link")
+        out.append(item)
     return out
 
 

@@ -20,6 +20,7 @@ from rich.console import Console
 from rich.table import Table
 
 from subitoo.config import get_settings
+from subitoo.core.privacy import safe_error
 from subitoo.core import db, pipeline
 from subitoo.core.fetch import build_context
 from subitoo.core.models import UNIVERSAL_FILTERS, Filters, Query, QueryStatus
@@ -81,6 +82,7 @@ def _query_json(q: Query) -> dict:
         "run_delay_seconds": q.run_delay_seconds,
         "enabled": q.enabled,
         "seeded": q.seeded,
+        "notify_on_price_change": q.notify_on_price_change,
         "status": q.status.value,
         "status_changed_at": _iso_ts(q.status_changed_at),
         "last_run_at": _iso_ts(q.last_run_at),
@@ -174,7 +176,10 @@ def cmd_doctor() -> None:
     from subitoo.core.fetch import BrowserClient
     try:
         BrowserClient(get_settings()).health_check()
-        console.print(f"[green]✓[/green] browser reachable at {get_settings().browser_ws_url}")
+        if get_settings().browser_backend == "local":
+            console.print("[green]✓[/green] local browser dependency available; launch checked on fetch")
+        else:
+            console.print(f"[green]✓[/green] browser reachable at {get_settings().browser_ws_url}")
     except Exception as e:  # noqa: BLE001
         console.print(f"[red]✗[/red] browser: {e}")
         critical_ok = False
@@ -372,7 +377,8 @@ def query_add(
         delay = _parse_run_delay(spec.get("run_delay_seconds", 5))
         qid = db.create_query(conn, name=spec["name"], site=spec["site"],
                               search=search, filters=filters, cron=spec["cron"],
-                              enabled=spec.get("enabled", True), run_delay_seconds=delay)
+                              enabled=spec.get("enabled", True), run_delay_seconds=delay,
+                              notify_on_price_change=spec.get("notify_on_price_change", False))
         # Stays lazy on purpose: bulk imports shouldn't fire one browser session per
         # query. The scheduler seeds each on its first run (see `seeded` in pipeline).
         console.print(f"[green]Created query {qid}[/green] ({spec['name']})")
@@ -472,6 +478,10 @@ def query_edit(
             fields["cron"] = spec["cron"]
         if "name" in spec:
             fields["name"] = spec["name"]
+        if "notify_on_price_change" in spec:
+            if not isinstance(spec["notify_on_price_change"], bool):
+                raise typer.BadParameter("notify_on_price_change must be boolean")
+            fields["notify_on_price_change"] = spec["notify_on_price_change"]
         if "run_delay_seconds" in spec:
             try:
                 fields["run_delay_seconds"] = _parse_run_delay(spec["run_delay_seconds"])
@@ -552,7 +562,7 @@ def query_test(query_id: int) -> None:
     try:
         matches = pipeline.dry_run(conn, query_id)
     except Exception as e:  # noqa: BLE001
-        console.print(f"[red]Dry run failed:[/red] {e}")
+        console.print(f"[red]Dry run failed:[/red] {safe_error(e)}")
         raise typer.Exit(1)
     console.print(f"[green]{len(matches)} matching listing(s)[/green]")
     t = Table("id", "title", "price", "shipping", "location")
@@ -565,6 +575,21 @@ def query_test(query_id: int) -> None:
 
 
 # --------------------------------------------------------------------- running
+
+@app.command("serve")
+def cmd_serve(interval: int = typer.Option(60, min=60)) -> None:
+    """Run a local heartbeat without Docker, Ofelia, or a Docker socket."""
+    import signal
+    import threading
+    from subitoo.core.scheduler import serve
+    stop = threading.Event()
+    def shutdown(signum, frame):
+        stop.set()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, shutdown)
+    serve(_conn(), lock_path=Path(get_settings().db_path + ".dispatcher.lock"),
+          interval=interval, stop=stop)
+
 
 @app.command("run-due")
 def cmd_run_due() -> None:
@@ -629,10 +654,13 @@ def notify_test() -> None:
                                  url="https://example.com", query_name="test",
                                  price=1.0, currency="EUR"))
     except Exception as e:  # noqa: BLE001
-        console.print(f"[red]Notification failed:[/red] {e}")
+        console.print(f"[red]Notification failed:[/red] {safe_error(e)}")
         raise typer.Exit(1)
     console.print("[green]Test notification sent[/green]")
 
+
+from subitoo.watch_cli import watch_app
+app.add_typer(watch_app, name="watch")
 
 if __name__ == "__main__":
     app()

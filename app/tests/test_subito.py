@@ -38,5 +38,6 @@ def test_parse_items_well_formed():
     assert b.posted_at is None                # no dates node -> unknown
 
 
-def test_parse_empty_payload():
-    assert parse_items({}) == []
+def test_parse_explicit_empty_results():
+    # An absent result list is a schema error, not an observed empty search.
+    assert parse_items({"ads": []}) == []

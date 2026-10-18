@@ -54,6 +54,7 @@ class HttpClient:
         return self._session
 
     def get(self, url: str, **kwargs):
+        kwargs.setdefault("timeout", 30)
         return self.session.get(url, **kwargs)
 
     def post(self, url: str, **kwargs):
@@ -90,6 +91,11 @@ class BrowserClient:
 
     def health_check(self) -> None:
         """Raise if the browser server's WS port is not accepting connections."""
+        if self._settings.browser_backend == "local":
+            from importlib.util import find_spec
+            if find_spec("playwright") is None:
+                raise RuntimeError("install the browser extra and playwright install firefox")
+            return
         import socket
 
         host, port = self._host_port()
@@ -112,12 +118,14 @@ class BrowserClient:
         of re-warming per page. Closes only the context, leaving the browser warm.
         """
         backend = self._settings.browser_backend
-        if backend != "camoufox":
+        if backend not in ("camoufox", "local"):
             raise NotImplementedError(f"browser backend {backend!r} not implemented yet")
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            browser = p.firefox.connect(self._settings.browser_ws_url)
+            browser = (p.firefox.launch(
+                headless=True, firefox_user_prefs={"devtools.jsonview.enabled": False})
+                if backend == "local" else p.firefox.connect(self._settings.browser_ws_url))
             context = browser.new_context(viewport={"width": 1440, "height": 900})
             try:
                 page = _CamoufoxPage(context.new_page(), wait_seconds=wait_seconds)
@@ -125,7 +133,9 @@ class BrowserClient:
                     page.goto(warm_url)
                 yield page
             finally:
-                context.close()  # keep the shared browser warm; do NOT browser.close()
+                context.close()
+                if backend == "local":
+                    browser.close()  # owned local process, never the shared server
 
 
 class _CamoufoxPage:

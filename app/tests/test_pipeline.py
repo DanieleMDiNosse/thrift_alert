@@ -64,6 +64,7 @@ def test_run_delay_applied_only_after_seed(conn, recorder):
 
 def test_price_change_notifies_with_old_price(conn, recorder):
     qid = mkquery(conn)
+    db.update_query(conn, qid, notify_on_price_change=True)
     seed(conn, qid, [make_listing("A", price=100.0)], recorder)
     FakeSite.to_return = [make_listing("A", price=120.0)]
     res = pipeline.run_query(conn, qid, now_ts=2000, send=recorder)
@@ -220,12 +221,11 @@ def test_heartbeat_dedup_failed_send_lets_next_query_try(conn, recorder):
     assert len(recorded) == 1  # only the successful send persisted
 
 
-def test_dupes_across_heartbeats_still_fire(conn, recorder):
-    """Documents the accepted limitation: dedup is per-heartbeat only. Two separate
-    heartbeats (separate scratchpads) still double-fire the same ad — by design."""
+def test_dupes_across_heartbeats_are_suppressed(conn, recorder):
+    """The durable global event replaces upstream per-heartbeat-only dedup."""
     q1, q2 = _two_seeded_queries(conn, recorder)
     FakeSite.to_return = [make_listing("A"), make_listing("C", title="New")]
     # Separate run_query calls = separate heartbeats = separate scratchpads.
     pipeline.run_query(conn, q1, now_ts=2000, send=recorder)
     pipeline.run_query(conn, q2, now_ts=2000, send=recorder)
-    assert len(recorder.sent) == 2
+    assert len(recorder.sent) == 1

@@ -21,6 +21,7 @@ from croniter import croniter
 
 from subitoo.config import get_settings
 from subitoo.core import db, notify
+from subitoo.core.privacy import safe_error
 from subitoo.core.fetch import build_context
 from subitoo.core.filters import apply_filters
 from subitoo.core.models import Notification, Query, QueryStatus
@@ -118,14 +119,23 @@ def run_query(conn, query_id: int, *, now_ts: int | None = None,
         # One listing per id: paging a live result set (new ads shift the order between
         # page requests) can return the same ad twice, which would break the seed insert.
         listings = list({x.site_listing_id: x for x in adapter.fetch(q.search, ctx)}.values())
-        matched = apply_filters(listings, q.filters)
+        matched = _matches(conn, q, listings)
         res.n_found = len(matched)
 
         if not q.seeded:
             # FIRST RUN: record everything as seen, notify nothing.
-            for lst in matched:
-                db.insert_listing(conn, query_id, lst, now_ts)
-            db.update_query(conn, query_id, seeded=True)
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                for lst in matched:
+                    db.insert_listing(conn, query_id, lst, now_ts)
+                    conn.execute(
+                        "INSERT OR IGNORE INTO listing_events VALUES (?,?,'baseline',?)",
+                        (q.site, lst.site_listing_id, now_ts))
+                db.update_query(conn, query_id, seeded=True)
+                conn.execute("COMMIT")
+            except BaseException:
+                conn.execute("ROLLBACK")
+                raise
         else:
             for lst in matched:
                 _process_listing(conn, q, lst, res, now_ts, send, heartbeat_seen)
@@ -136,10 +146,25 @@ def run_query(conn, query_id: int, *, now_ts: int | None = None,
         db.update_query(conn, query_id, last_run_at=now_ts)
         db.set_status(conn, query_id, QueryStatus.PENDING, now_ts)
     except Exception as e:  # noqa: BLE001 - latch to error, never crash the dispatcher
-        log.exception("query %s failed", query_id)
-        db.finish_run(conn, run_id, status="error", error_message=str(e), ts=now_ts)
+        diagnostic = safe_error(e)
+        log.error("query %s failed: %s", query_id, diagnostic)
+        db.finish_run(conn, run_id, status="error", error_message=diagnostic, ts=now_ts)
         db.set_status(conn, query_id, QueryStatus.ERROR, now_ts)
     return res
+
+
+def _matches(conn, q: Query, listings):
+    matched = apply_filters(listings, q.filters)
+    if (q.filters.price_min is not None or q.filters.price_max is not None) and conn.execute(
+            "SELECT 1 FROM watch_sources WHERE query_id=?", (q.id,)).fetchone():
+        matched = [x for x in matched if x.currency == "EUR"]
+    return matched
+
+
+def _notification_name(conn, q: Query) -> str:
+    row = conn.execute("SELECT w.name FROM watches w JOIN watch_sources s "
+                       "ON s.watch_id=w.id WHERE s.query_id=?", (q.id,)).fetchone()
+    return row["name"] if row else q.name
 
 
 def _process_listing(conn, q: Query, lst, res: RunResult, now_ts: int,
@@ -147,6 +172,15 @@ def _process_listing(conn, q: Query, lst, res: RunResult, now_ts: int,
     """Classify one already-filtered listing and, if warranted, notify-then-persist."""
     settings = get_settings()
     existing = db.get_listing(conn, q.id, lst.site_listing_id)
+
+    pending = conn.execute(
+        "SELECT 1 FROM listing_events WHERE site=? AND site_listing_id=? AND state='pending'",
+        (q.site, lst.site_listing_id)).fetchone()
+    if existing is not None and pending:
+        _notify_and_persist(conn, q, lst, kind="new", old_price=None, res=res,
+                            now_ts=now_ts, send=send, settings=settings,
+                            existing_id=existing["id"], heartbeat_seen=heartbeat_seen)
+        return
 
     if existing is None:
         _notify_and_persist(conn, q, lst, kind="new", old_price=None, res=res,
@@ -156,6 +190,10 @@ def _process_listing(conn, q: Query, lst, res: RunResult, now_ts: int,
 
     if lst.price == existing["last_price"]:
         db.touch_listing(conn, existing["id"], now_ts)  # unchanged -> just seen
+        return
+
+    if not q.notify_on_price_change:
+        db.update_listing_price(conn, existing["id"], lst.price, now_ts)
         return
 
     # price changed and (since it passed filters) still matches -> notify.
@@ -174,7 +212,10 @@ def _notify_and_persist(conn, q: Query, lst, *, kind: str, old_price, res: RunRe
         suppressed — the dedup gates the *send*, never the per-query state, so the
         query's diary stays honest and it won't re-fire the ad on the next heartbeat."""
         if kind == "new":
-            db.insert_listing(conn, q.id, lst, now_ts)
+            if existing_id is None:
+                db.insert_listing(conn, q.id, lst, now_ts)
+            else:
+                db.update_listing_price(conn, existing_id, lst.price, now_ts)
             res.n_new += 1
         else:
             db.update_listing_price(conn, existing_id, lst.price, now_ts)
@@ -188,6 +229,47 @@ def _notify_and_persist(conn, q: Query, lst, *, kind: str, old_price, res: RunRe
     # Cross-query dedup: another query on this heartbeat already notified this exact ad.
     # Skip the send (and its image download) but still persist our own state.
     key = (q.site, lst.site_listing_id)
+    if kind == "new":
+        # Serialize the global event check and send across independent CLI processes.
+        # The transaction is held over the bounded network call. A crash after remote
+        # acceptance but before commit can still duplicate: remote exactly-once is not
+        # possible without notifier idempotency. Rollback leaves the event retryable.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            event = conn.execute(
+                "SELECT state FROM listing_events WHERE site=? AND site_listing_id=?",
+                key).fetchone()
+            if event and event["state"] in ("baseline", "sent"):
+                persist()
+                log_notif("suppressed")
+                res.n_suppressed += 1
+                conn.execute("COMMIT")
+                return
+            conn.execute("INSERT OR IGNORE INTO listing_events VALUES (?,?,'pending',?)",
+                         (*key, now_ts))
+            n = Notification(kind="new", title=lst.title, url=lst.url,
+                             query_name=_notification_name(conn, q), site=q.site, price=lst.price,
+                             currency=lst.currency, image_url=lst.image_url,
+                             location=lst.location, shipping_available=lst.shipping_available)
+            try:
+                send(n)
+            except Exception:
+                log_notif("failed", "notification transport failed; event remains pending")
+                conn.execute("COMMIT")
+                return
+            conn.execute("UPDATE listing_events SET state='sent' "
+                         "WHERE site=? AND site_listing_id=?", key)
+            persist()
+            log_notif("sent")
+            conn.execute("COMMIT")
+            res.n_notified += 1
+            heartbeat_seen.add(key)
+            return
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
+
     if key in heartbeat_seen:
         persist()
         log_notif("suppressed")
@@ -195,7 +277,7 @@ def _notify_and_persist(conn, q: Query, lst, *, kind: str, old_price, res: RunRe
         return
 
     n = Notification(
-        kind=kind, title=lst.title, url=lst.url, query_name=q.name, site=q.site,
+        kind=kind, title=lst.title, url=lst.url, query_name=_notification_name(conn, q), site=q.site,
         price=lst.price, currency=lst.currency, image_url=lst.image_url,
         location=lst.location, shipping_available=lst.shipping_available,
         old_price=old_price,
@@ -203,8 +285,8 @@ def _notify_and_persist(conn, q: Query, lst, *, kind: str, old_price, res: RunRe
     try:
         send(n)
     except Exception as e:  # noqa: BLE001 - do NOT persist -> retried next heartbeat
-        log.warning("notify failed for %s (%s): %s", lst.site_listing_id, kind, e)
-        log_notif("failed", str(e))
+        log.warning("notify failed for %s (%s): %s", lst.site_listing_id, kind, safe_error(e))
+        log_notif("failed", safe_error(e))
         return
 
     # send succeeded -> persist the state change, log it, and claim this ad for the
@@ -224,4 +306,4 @@ def dry_run(conn, query_id: int):
     adapter = get_site(q.site)
     ctx = build_context(get_settings(), needs_browser=adapter.needs_browser)
     listings = list(adapter.fetch(q.search, ctx))
-    return apply_filters(listings, q.filters)
+    return _matches(conn, q, listings)

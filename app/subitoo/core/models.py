@@ -107,6 +107,7 @@ class Query:
     run_delay_seconds: int  # pause before each seeded run (human pacing); seed bypasses it
     status: QueryStatus
     status_changed_at: int
+    notify_on_price_change: bool = False
     last_run_at: int | None = None
     next_run_at: int | None = None
     created_at: int | None = None

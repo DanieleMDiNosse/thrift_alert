@@ -204,8 +204,15 @@ def parse_item(ad: dict[str, Any]) -> Listing:
 
 
 def parse_items(payload: dict[str, Any]) -> list[Listing]:
-    ads = payload.get("ads") or payload.get("results") or []
-    return [parse_item(ad) for ad in ads if isinstance(ad, dict)]
+    if not isinstance(payload, dict):
+        raise RuntimeError("subito: expected search object")
+    ads = payload.get("ads") if "ads" in payload else payload.get("results")
+    if not isinstance(ads, list) or any(not isinstance(ad, dict) for ad in ads):
+        raise RuntimeError("subito: missing or malformed search items")
+    items = [parse_item(ad) for ad in ads]
+    if any(not x.site_listing_id or not x.title or not x.url for x in items):
+        raise RuntimeError("subito: invalid listing identity/title/link")
+    return items
 
 
 @register("subito")

@@ -53,11 +53,15 @@ def migrate(conn: sqlite3.Connection) -> int:
     for num, path in _migration_files():
         if num <= current:
             continue
-        # executescript manages its own transaction (it commits any pending one),
-        # so we run the DDL then stamp the version. DDL statements are individually
-        # durable; a failed migration simply leaves user_version un-bumped.
-        conn.executescript(path.read_text())
-        conn.execute(f"PRAGMA user_version={num}")
+        # DDL and version stamp must commit together: ALTER TABLE is not repeatable.
+        # executescript pre-commits, so BEGIN must live inside the script itself.
+        try:
+            conn.executescript("BEGIN IMMEDIATE;\n" + path.read_text()
+                               + f"\nPRAGMA user_version={num};\nCOMMIT;")
+        except BaseException:
+            if conn.in_transaction:
+                conn.execute("ROLLBACK")
+            raise
         applied = num
     return applied
 
@@ -81,6 +85,7 @@ def _row_to_query(r: sqlite3.Row) -> Query:
         enabled=bool(r["enabled"]),
         seeded=bool(r["seeded"]),
         run_delay_seconds=r["run_delay_seconds"],
+        notify_on_price_change=bool(r["notify_on_price_change"]),
         status=QueryStatus(r["status"]),
         status_changed_at=r["status_changed_at"],
         last_run_at=r["last_run_at"],
@@ -93,7 +98,8 @@ def _row_to_query(r: sqlite3.Row) -> Query:
 # --- queries CRUD ----------------------------------------------------------------
 
 def create_query(conn, *, name: str, site: str, search: dict, filters: Filters,
-                 cron: str, enabled: bool = True, run_delay_seconds: int = 5) -> int:
+                 cron: str, enabled: bool = True, run_delay_seconds: int = 5,
+                 notify_on_price_change: bool = False) -> int:
     ts = now()
     cur = conn.execute(
         """INSERT INTO queries
@@ -103,6 +109,8 @@ def create_query(conn, *, name: str, site: str, search: dict, filters: Filters,
         (name, site, json.dumps(search), filters.model_dump_json(), cron,
          int(enabled), int(run_delay_seconds), ts, ts, ts),
     )
+    conn.execute("UPDATE queries SET notify_on_price_change=? WHERE id=?",
+                 (int(notify_on_price_change), cur.lastrowid))
     return cur.lastrowid
 
 
@@ -163,7 +171,7 @@ def claim_query(conn, query_id: int, ts: int | None = None) -> bool:
     ts = ts or now()
     cur = conn.execute(
         "UPDATE queries SET status='running', status_changed_at=? "
-        "WHERE id=? AND status='pending'",
+        "WHERE id=? AND status='pending' AND enabled=1",
         (ts, query_id),
     )
     return cur.rowcount == 1
