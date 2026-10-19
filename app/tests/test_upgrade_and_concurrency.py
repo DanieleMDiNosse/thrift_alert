@@ -25,7 +25,7 @@ def test_upgrade_preserves_legacy_setting_and_seen_events(tmp_path):
     new = db.create_query(c, name='new', site='fake', search={}, filters=Filters(), cron='*/30 * * * *')
     assert not db.get_query(c, new).notify_on_price_change
     assert c.execute("SELECT state FROM listing_events WHERE site='fake' AND site_listing_id='old'").fetchone()[0] == 'baseline'
-    assert db.migrate(c) == 4
+    assert db.migrate(c) == db._migration_files()[-1][0]
     c.close()
 
 
@@ -48,7 +48,7 @@ def test_interrupted_migration_rolls_back_and_can_retry(tmp_path):
     assert not c.in_transaction
     c.close()
     c = db.init_db(str(tmp_path/"interrupted.db"))
-    assert c.execute("PRAGMA user_version").fetchone()[0] == 4
+    assert c.execute("PRAGMA user_version").fetchone()[0] == db._migration_files()[-1][0]
     c.close()
 
 

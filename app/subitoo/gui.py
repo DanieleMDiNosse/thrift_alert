@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 from pydantic import ValidationError
 
 from subitoo.config import get_settings
-from subitoo.core import db, watches
+from subitoo.core import db, watches, descriptions
 from subitoo.core.models import Notification
 
 ASSETS = Path(__file__).with_name('web')
@@ -68,17 +68,29 @@ def _state(conn):
             })
     rows = conn.execute('''
         WITH observed AS (
-            SELECT l.title,l.last_price AS price,l.currency,l.url,q.site,
+            SELECT l.title,l.last_price AS price,l.currency,l.url,q.site,l.site_listing_id,l.raw_json,
+                   d.description AS cached_description,
                    COALESCE(w.name,q.name) AS watch_name,l.first_seen_at,l.last_seen_at,
                    ROW_NUMBER() OVER (PARTITION BY q.site,l.site_listing_id
                                       ORDER BY l.last_seen_at DESC,l.id DESC) AS position
             FROM listings l JOIN queries q ON q.id=l.query_id
             LEFT JOIN watch_sources s ON s.query_id=q.id
             LEFT JOIN watches w ON w.id=s.watch_id
-        ) SELECT title,price,currency,url,site,watch_name,first_seen_at,last_seen_at
+            LEFT JOIN listing_descriptions d ON d.site=q.site AND d.site_listing_id=l.site_listing_id
+        ) SELECT title,price,currency,url,site,site_listing_id,raw_json,cached_description,
+                 watch_name,first_seen_at,last_seen_at
           FROM observed WHERE position=1 ORDER BY last_seen_at DESC LIMIT 40
     ''').fetchall()
-    listings = [{**dict(row), 'url': _safe_link(row['url'])} for row in rows]
+    listings = []
+    for row in rows:
+        item = dict(row)
+        raw = item.pop('raw_json')
+        cached = item.pop('cached_description')
+        item['url'] = _safe_link(item['url'])
+        item['description'] = cached if cached is not None else descriptions.native_description(item['site'], raw)
+        item['can_load_description'] = item['description'] is None and descriptions.can_load(
+            item['site'], item['site_listing_id'], item['url'])
+        listings.append(item)
     try:
         from subitoo.core.notify import active_notifier
         active_notifier().validate_config()
@@ -236,6 +248,16 @@ class GUIHandler(BaseHTTPRequestHandler):
             conn.execute("UPDATE queries SET status='pending',status_changed_at=? WHERE id=? AND status='error'",
                          (db.now(), qid))
             return {'ok': True}
+        if self.path == '/api/listings/description':
+            site, identity = data.get('site'), data.get('id')
+            if site not in ('subito', 'vinted', 'wallapop') or not isinstance(identity, str) or not 1 <= len(identity) <= 200:
+                raise ValueError('Identità annuncio non valida.')
+            if not self.server.description_lock.acquire(blocking=False):
+                raise ValueError('Attendi il caricamento della descrizione in corso.')
+            try:
+                return {'description': descriptions.load_description(conn, site, identity)}
+            finally:
+                self.server.description_lock.release()
         if self.path == '/api/notify/test':
             with self.server.notify_lock:
                 if time.monotonic() - self.server.last_notify < 30:
@@ -258,5 +280,6 @@ def make_server(*, host='127.0.0.1', port=8787):
     server.daemon_threads = True
     server.csrf_token = secrets.token_hex(32)
     server.notify_lock = threading.Lock()
+    server.description_lock = threading.Lock()
     server.last_notify = float('-inf')
     return server

@@ -11,6 +11,9 @@
   let loading = false;
   let notifying = false;
   let showAllListings = false;
+  const expandedDescriptions = new Set();
+  const loadingDescriptions = new Set();
+  const loadedDescriptions = new Map();
   const pending = new Set();
   const node = (tag, text, className) => {
     const element = document.createElement(tag);
@@ -157,6 +160,17 @@
     card.append(top, summary, sources, actions);
     return card;
   }
+  async function loadDescription(listing) {
+    const key = `${listing.site}:${listing.site_listing_id}`;
+    if (loadingDescriptions.has(key)) return;
+    loadingDescriptions.add(key);
+    renderListings();
+    try {
+      const result = await request('/api/listings/description', {site: listing.site, id: listing.site_listing_id});
+      loadedDescriptions.set(key, result.description);
+    } catch (error) { toast(error.message); }
+    finally { loadingDescriptions.delete(key); renderListings(); }
+  }
   function renderListings() {
     const visible = showAllListings ? state.listings : state.listings.slice(0, 8);
     const items = visible.map((listing) => {
@@ -166,6 +180,29 @@
       const title = node(url ? 'a' : 'span', listing.title || 'Annuncio senza titolo', 'listing-title');
       if (url) { title.href = url; title.target = '_blank'; title.rel = 'noopener noreferrer'; }
       description.append(title, node('div', `${names[listing.site] || listing.site || 'Mercatino'} · ${listing.watch_name || 'Ricerca'}`, 'listing-meta'));
+      const key = `${listing.site}:${listing.site_listing_id}`;
+      const text = loadedDescriptions.has(key) ? loadedDescriptions.get(key) : listing.description;
+      if (typeof text === 'string' && text) {
+        const expanded = expandedDescriptions.has(key);
+        const paragraph = node('p', text, `listing-description${expanded ? ' expanded' : ''}`);
+        const toggle = button(expanded ? 'Mostra meno' : 'Mostra tutto', () => {
+          if (expandedDescriptions.has(key)) expandedDescriptions.delete(key);
+          else expandedDescriptions.add(key);
+          renderListings();
+        }, 'text-button description-toggle');
+        toggle.setAttribute('aria-expanded', String(expanded));
+        description.append(paragraph, toggle);
+        requestAnimationFrame(() => {
+          if (!expanded && paragraph.isConnected) toggle.hidden = paragraph.scrollHeight <= paragraph.clientHeight + 1;
+        });
+      } else if (listing.can_load_description && text == null) {
+        const loading = loadingDescriptions.has(key);
+        const load = button(loading ? 'Caricamento…' : 'Carica descrizione', () => loadDescription(listing), 'text-button description-toggle');
+        load.disabled = loading;
+        description.append(load);
+      } else {
+        description.append(node('p', 'Descrizione non disponibile.', 'listing-description-unavailable'));
+      }
       row.append(description, node('span', price(listing.price, listing.currency || 'EUR'), 'listing-price'), node('span', date(listing.last_seen_at ?? listing.first_seen_at), 'listing-date'));
       return row;
     });

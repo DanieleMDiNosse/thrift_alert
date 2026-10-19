@@ -47,6 +47,16 @@ Gli «Annunci osservati» includono la baseline e non significano necessariament
 interrogare i marketplace. I link aprono gli annunci nel sito originale; non vengono
 caricate immagini remote automaticamente.
 
+Sotto il titolo appare la descrizione, quando disponibile, limitata a tre righe.
+«Mostra tutto» espande il testo completo e «Mostra meno» lo richiude. I testi brevi
+non mostrano pulsanti inutili. Subito e Wallapop usano il testo già ricevuto dalla
+ricerca. Vinted non lo include nel catalogo: «Carica descrizione» apre una richiesta
+al dettaglio soltanto quando premi il pulsante, poi conserva il risultato in cache.
+La cache Vinted è una copia del testo al momento del primo caricamento, non una
+verifica aggiornata a ogni visita. Annunci rimossi o blocchi del sito possono impedirne
+il recupero; in quel caso puoi aprire il link originale. Nessuna richiesta aggiuntiva
+per descrizioni viene eseguita durante il polling automatico della pagina.
+
 Le sorgenti in errore restano sospese per evitare richieste ripetute. Prima di
 riprovare controlla URL, accesso e restrizioni della piattaforma. Il ripristino
 riabilita la normale pianificazione; non aggira CAPTCHA o blocchi e non forza una
