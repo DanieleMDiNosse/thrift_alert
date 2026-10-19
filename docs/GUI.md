@@ -44,8 +44,14 @@ Possono comparire annunci esteri; non viene garantita la spedizione in Italia.
 
 Gli «Annunci osservati» includono la baseline e non significano necessariamente
 «appena pubblicati» o «già notificati». La pagina legge SQLite e si aggiorna senza
-interrogare i marketplace. I link aprono gli annunci nel sito originale; non vengono
-caricate immagini remote automaticamente.
+interrogare le ricerche dei marketplace. I link aprono gli annunci nel sito originale.
+Le foto appaiono accanto al testo e vengono caricate dal browser dai CDN dei mercatini
+quando entrano nella pagina. Un clic sulla foto la apre più grande in una nuova scheda.
+Foto assenti, non valide o non raggiungibili mostrano un segnaposto; nessun proxy
+immagini sul server locale. Il CDN riceve la richiesta del browser (e quindi il suo
+indirizzo IP), ma non il riferimento alla pagina locale: viene usato no-referrer.
+
+Il tema scuro è predefinito e comprende schede, annunci, modulo, campi e messaggi.
 
 Sotto il titolo appare la descrizione, quando disponibile, limitata a tre righe.
 «Mostra tutto» espande il testo completo e «Mostra meno» lo richiude. I testi brevi
@@ -70,7 +76,9 @@ Android iniziale va fatta localmente come descritto in OPERATIONS.md.
 ## Sicurezza e limiti
 
 - Server limitato a 127.0.0.1, non esposto alla LAN o a Internet.
-- Host/Origin e token anti-CSRF sulle modifiche; nessun CDN, font esterno o framework.
+- Host/Origin e token anti-CSRF sulle modifiche; nessuno script, font o CSS esterno.
+- Immagini HTTPS limitate ai CDN dei marketplace; credenziali URL e host arbitrari
+  rifiutati. I contenuti testuali continuano a essere mostrati come testo, non HTML.
 - Stesso database e stesse regole della CLI; nessun LLM o nuovo servizio cloud.
 - Nessuna gestione credenziali o sessioni Facebook nel browser.
 - È un'applicazione personale locale, non un pannello multiutente autenticato.

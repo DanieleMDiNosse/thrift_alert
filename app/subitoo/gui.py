@@ -39,6 +39,22 @@ def _safe_link(value):
     return None
 
 
+def _safe_image(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parts = urlsplit(value)
+        host = parts.hostname or ''
+        allowed = any(host.endswith('.' + suffix) for suffix in
+                      ('vinted.net', 'sbito.it', 'wallapop.com', 'autoscout24.net'))
+        if (allowed and parts.scheme == 'https' and parts.port in (None, 443)
+                and not parts.username and not parts.password):
+            return value
+    except ValueError:
+        pass
+    return None
+
+
 def _monitor_running():
     path = Path(get_settings().db_path + '.dispatcher.lock')
     try:
@@ -68,7 +84,7 @@ def _state(conn):
             })
     rows = conn.execute('''
         WITH observed AS (
-            SELECT l.title,l.last_price AS price,l.currency,l.url,q.site,l.site_listing_id,l.raw_json,
+            SELECT l.title,l.last_price AS price,l.currency,l.url,l.image_url,q.site,l.site_listing_id,l.raw_json,
                    d.description AS cached_description,
                    COALESCE(w.name,q.name) AS watch_name,l.first_seen_at,l.last_seen_at,
                    ROW_NUMBER() OVER (PARTITION BY q.site,l.site_listing_id
@@ -77,7 +93,7 @@ def _state(conn):
             LEFT JOIN watch_sources s ON s.query_id=q.id
             LEFT JOIN watches w ON w.id=s.watch_id
             LEFT JOIN listing_descriptions d ON d.site=q.site AND d.site_listing_id=l.site_listing_id
-        ) SELECT title,price,currency,url,site,site_listing_id,raw_json,cached_description,
+        ) SELECT title,price,currency,url,image_url,site,site_listing_id,raw_json,cached_description,
                  watch_name,first_seen_at,last_seen_at
           FROM observed WHERE position=1 ORDER BY last_seen_at DESC LIMIT 40
     ''').fetchall()
@@ -87,6 +103,7 @@ def _state(conn):
         raw = item.pop('raw_json')
         cached = item.pop('cached_description')
         item['url'] = _safe_link(item['url'])
+        item['image_url'] = _safe_image(item['image_url'])
         item['description'] = cached if cached is not None else descriptions.native_description(item['site'], raw)
         item['can_load_description'] = item['description'] is None and descriptions.can_load(
             item['site'], item['site_listing_id'], item['url'])
@@ -120,7 +137,8 @@ class GUIHandler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Referrer-Policy', 'no-referrer')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; "
-                         "img-src 'self' data:; connect-src 'self'; object-src 'none'; "
+                         "img-src 'self' https://*.vinted.net https://*.sbito.it https://*.wallapop.com https://*.autoscout24.net; "
+                         "connect-src 'self'; object-src 'none'; "
                          "base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
         self.end_headers()
         self.wfile.write(body)

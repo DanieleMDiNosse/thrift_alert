@@ -203,7 +203,21 @@
       } else {
         description.append(node('p', 'Descrizione non disponibile.', 'listing-description-unavailable'));
       }
-      row.append(description, node('span', price(listing.price, listing.currency || 'EUR'), 'listing-price'), node('span', date(listing.last_seen_at ?? listing.first_seen_at), 'listing-date'));
+      const media = node('div', undefined, 'listing-media');
+      const fallback = node('span', 'Foto non disponibile', 'image-placeholder');
+      const imageURL = safeURL(listing.image_url);
+      if (imageURL && imageURL.startsWith('https://')) {
+        const link = node('a', undefined, 'listing-image-link');
+        link.href = imageURL; link.target = '_blank'; link.rel = 'noopener noreferrer';
+        link.setAttribute('aria-label', `Apri foto: ${listing.title || 'annuncio'}`);
+        const image = node('img', undefined, 'listing-image');
+        image.alt = listing.title || 'Foto articolo'; image.loading = 'lazy';
+        image.decoding = 'async'; image.referrerPolicy = 'no-referrer';
+        image.width = 104; image.height = 104;
+        image.addEventListener('error', () => media.replaceChildren(fallback), {once: true});
+        image.src = imageURL; link.append(image); media.append(link);
+      } else media.append(fallback);
+      row.append(media, description, node('span', price(listing.price, listing.currency || 'EUR'), 'listing-price'), node('span', date(listing.last_seen_at ?? listing.first_seen_at), 'listing-date'));
       return row;
     });
     $('listings').replaceChildren(...(items.length ? items : [node('p', 'Nessun annuncio osservato. Compariranno qui dopo la prima scansione delle tue ricerche.', 'empty-copy')]));
