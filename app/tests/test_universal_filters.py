@@ -65,6 +65,7 @@ def test_answers_land_on_the_right_fields(monkeypatch):
         "shipping (any/yes/no)": "yes",
         "title_include (regex)": "DS ?124",
         "title_exclude (regex)": "DS218j",
+        "description_include (regex)": "garanzia",
     }
     monkeypatch.setattr(cli.typer, "prompt",
                         lambda text, default="", show_default=True: replies[text.strip()])
@@ -74,6 +75,7 @@ def test_answers_land_on_the_right_fields(monkeypatch):
     assert filters.shipping == "yes"
     assert filters.title_include == "DS ?124"
     assert filters.title_exclude == "DS218j"
+    assert filters.description_include == "garanzia"
 
 
 def test_every_adapter_declares_only_real_filter_names():

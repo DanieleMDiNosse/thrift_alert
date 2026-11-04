@@ -6,18 +6,21 @@ filters are rejected rather than silently broadening a saved search.
 from __future__ import annotations
 
 import math
+import random
 import re
+import time
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from subitoo.core.fetch import FetchContext
+from subitoo.core.scan import ScanListings
 from subitoo.core.models import Listing, SearchField
 from subitoo.registry import register
 from subitoo.sites.base import BaseSite
 
 API_URL = "https://api.wallapop.com/api/v3/search"
-MAX_PAGES = 5
-TIMEOUT = 20
+MAX_PAGES = 25
+TIMEOUT = 120
 PARAMS = {"keywords", "latitude", "longitude", "category_ids", "min_sale_price",
           "max_sale_price", "distance", "order_by", "source", "filters_source"}
 ORDERS = {"newest", "price_low_to_high", "price_high_to_low"}
@@ -117,7 +120,7 @@ class WallapopSite(BaseSite):
     url_host_pattern = r"^(?:(?:www|it|es|en)\.)?wallapop\.com$"
     search_schema = [
         SearchField("url", "Wallapop /app/search URL (including latitude/longitude)"),
-        SearchField("max_pages", "Max pages (1–5)", required=False, default="1"),
+        SearchField("max_pages", "Max pages (1–25)", required=False, default="1"),
     ]
 
     def validate_search(self, search: dict[str, Any]) -> dict[str, Any]:
@@ -128,20 +131,24 @@ class WallapopSite(BaseSite):
             raise ValueError("wallapop: expected an HTTPS /app/search URL without credentials, port or fragment")
         _search_params(search["url"])
         pages = search.get("max_pages", "1")
-        if isinstance(pages, bool) or not re.fullmatch(r"[1-5]", str(pages)):
-            raise ValueError("wallapop: max_pages must be an integer from 1 to 5")
+        if (isinstance(pages, bool) or not re.fullmatch(r"[0-9]+", str(pages))
+                or not 1 <= int(pages) <= MAX_PAGES):
+            raise ValueError("wallapop: max_pages must be an integer from 1 to 25")
         search["max_pages"] = str(pages)
         return search
 
-    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> list[Listing]:
+    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> ScanListings:
         search = self.validate_search(search)
         parts = urlsplit(search["url"])
         root = f"https://{parts.netloc}"
         params = _search_params(search["url"])
         headers = {"Accept": "application/json", "X-DeviceOS": "0",
                    "Origin": root, "Referer": root + "/"}
-        out: list[Listing] = []
-        for _ in range(int(search["max_pages"])):
+        out = ScanListings()
+        seen_cursors: set[str] = set()
+        for page_no in range(int(search["max_pages"])):
+            if page_no:
+                time.sleep(random.uniform(2.5, 5.0))
             try:
                 response = ctx.http.get(API_URL + "?" + urlencode(params), headers=headers,
                                         timeout=TIMEOUT, allow_redirects=False)
@@ -155,7 +162,17 @@ class WallapopSite(BaseSite):
                 raise RuntimeError("wallapop: malformed search response (not JSON)") from exc
             listings, cursor = _parse_page(body, root)
             out.extend(listings)
-            if not listings or not cursor:
+            out.pages += 1
+            stop_page = getattr(ctx, "stop_page", None)
+            if callable(stop_page) and stop_page(listings):
+                out.complete, out.reason = True, "end"
                 break
+            if not listings or not cursor:
+                out.complete, out.reason = True, "end"
+                break
+            if cursor in seen_cursors:
+                out.reason = "repeated_cursor"
+                break
+            seen_cursors.add(cursor)
             params["next_page"] = cursor
         return out

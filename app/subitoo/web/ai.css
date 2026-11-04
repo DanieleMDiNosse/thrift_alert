@@ -1,0 +1,22 @@
+/* Scoped to the optional assistant; existing listing UI is unchanged. */
+#ai-assistant{margin:48px 0 24px;padding-top:32px;border-top:1px solid var(--line,#273747);color:var(--ink,#eef4fa);min-width:0;overflow-wrap:anywhere}
+#ai-assistant h2{font-size:21px}#ai-assistant h3{margin:0 0 10px;font-size:16.5px}#ai-assistant h4{margin:18px 0 6px}#ai-assistant p{margin:8px 0}
+#ai-assistant .ai-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:16px}
+#ai-assistant .ai-toolbar h2{margin-right:auto}#ai-assistant .ai-field{display:flex;flex-direction:column;gap:5px;font-size:12.5px;min-width:0;max-width:100%}
+#ai-assistant .ai-field:has(input[type=checkbox]){flex-direction:row;align-items:center}
+#ai-assistant input,#ai-assistant select,#ai-assistant textarea{font:inherit;border:1px solid var(--line-strong,#35495e);border-radius:8px;padding:8px 10px;background:var(--bg,#0f1720);color:inherit;max-width:100%;min-width:0}
+#ai-assistant input[type=checkbox]{width:16px;height:16px;flex-shrink:0;accent-color:var(--teal,#5eead4)}
+#ai-assistant textarea{width:100%;resize:vertical}#ai-assistant button{white-space:normal;max-width:100%;min-height:38px;border:1px solid var(--line-strong,#35495e);border-radius:8px;padding:8px 13px;background:var(--raised,#202f3d);color:inherit;font:inherit;font-size:13px;font-weight:560;cursor:pointer}
+#ai-assistant button:hover:not(:disabled){border-color:var(--teal,#5eead4)}
+#ai-assistant button:disabled{opacity:.5;cursor:not-allowed}#ai-assistant :is(button,a,input,select,textarea,summary):focus-visible{outline:2px solid var(--teal,#5eead4);outline-offset:3px}
+#ai-assistant .ai-ranks{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:14px;margin:16px 0}
+#ai-assistant .ai-group-heading{grid-column:1/-1}
+#ai-assistant .ai-product,#ai-assistant .ai-panel,#ai-assistant .ai-settings{background:var(--surface,#17222e);border:1px solid var(--line,#273747);border-radius:13px;padding:18px;min-width:0}
+#ai-assistant .ai-panel{margin-top:16px}#ai-assistant .ai-panel:empty{display:none}
+#ai-assistant .ai-muted,#ai-assistant .ai-status{font-size:12.5px;color:var(--muted,#98acb9)}#ai-assistant .ai-warning{color:#f3c978;font-size:12.5px}
+#ai-assistant .ai-error:not(:empty){padding:12px;border:1px solid #70404b;border-radius:9px;color:var(--red,#fda4af);background:rgba(56,31,42,.85);margin:12px 0}
+#ai-assistant a{color:var(--blue,#93c5fd)}#ai-assistant .ai-markdown{white-space:pre-wrap;overflow-wrap:anywhere}#ai-assistant code{background:var(--bg,#0f1720);padding:1px 5px;border-radius:4px}
+#ai-assistant .ai-messages{max-height:420px;overflow:auto;margin-bottom:16px}#ai-assistant .ai-message{border-left:3px solid var(--teal,#5eead4);padding:10px 14px;margin:10px 0;background:var(--bg,#0f1720);border-radius:6px}
+#ai-assistant .ai-hypothetical,#ai-assistant .ai-settings{margin:16px 0}#ai-assistant summary{cursor:pointer;font-weight:600;padding:4px 0}#ai-assistant .ai-price-fields{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px;margin-top:12px}
+#ai-assistant .ai-panel>.ai-field{margin:12px 0}
+@media(max-width:600px){#ai-assistant .ai-toolbar{align-items:stretch}#ai-assistant .ai-toolbar>.ai-field{flex:1 1 100%}#ai-assistant .ai-toolbar h2{width:100%}#ai-assistant .ai-panel,#ai-assistant .ai-product{padding:14px}#ai-assistant select{width:100%}}

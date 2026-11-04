@@ -24,18 +24,21 @@ class Source(BaseModel):
     search_url: str
     enabled: bool = True
     cron: str = '*/30 * * * *'
-    max_pages: int = Field(default=1, ge=1, le=3)
+    max_pages: int = Field(default=1, ge=1, le=30)
+    search_urls: list[str] = Field(default_factory=list, max_length=50)
 
 
 class Watch(BaseModel):
     model_config = ConfigDict(extra='forbid')
     name: str = Field(min_length=1, max_length=120)
     enabled: bool = True
-    search_text: str | None = Field(default=None, min_length=1, max_length=120)
+    search_text: str | None = Field(default=None, min_length=1, max_length=6050)
+    search_phrases: list[str] = Field(default_factory=list, max_length=50)
     min_price_eur: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     max_price_eur: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     title_include: list[str] = Field(default_factory=list)
     title_exclude: list[str] = Field(default_factory=list)
+    description_include: list[str] = Field(default_factory=list)
     notify_on_price_change: bool = False
     sources: dict[str, Source] = Field(min_length=1)
 
@@ -43,7 +46,7 @@ class Watch(BaseModel):
     def valid_range(self):
         if not self.name.strip():
             raise ValueError('watch name cannot be blank')
-        if any(not w.strip() for w in self.title_include + self.title_exclude):
+        if any(not w.strip() for w in self.title_include + self.title_exclude + self.description_include):
             raise ValueError('keywords cannot be blank')
         if (self.min_price_eur is not None and self.max_price_eur is not None
                 and self.min_price_eur > self.max_price_eur):
@@ -57,9 +60,19 @@ class Watch(BaseModel):
 def _filters(w: Watch) -> Filters:
     # Literal, case-insensitive substrings. ALL include words, ANY exclude words.
     include = ''.join(f'(?=.*{re.escape(x)})' for x in w.title_include)
+    if w.search_phrases:
+        alternatives = []
+        for phrase in w.search_phrases:
+            words = phrase.split()
+            if not words or len(phrase) > 120:
+                raise ValueError('each search phrase must contain 1–120 characters')
+            alternatives.append(''.join(f'(?=.*{re.escape(word)})' for word in words))
+        include = '(?:' + '|'.join(alternatives) + ')' + include
     exclude = '|'.join(re.escape(x) for x in w.title_exclude)
+    description = ''.join(f'(?=.*{re.escape(x.strip())})' for x in w.description_include)
     return Filters(price_min=w.min_price_eur, price_max=w.max_price_eur,
-                   title_include=include or None, title_exclude=exclude or None)
+                   title_include=include or None, title_exclude=exclude or None,
+                   description_include=description or None)
 
 
 def get(conn, watch_id: int) -> dict[str, Any]:
@@ -93,8 +106,15 @@ def save(conn, spec: dict, *, watch_id: int | None = None) -> int:
             adapter = get_site(site)
         except KeyError:
             raise ValueError(f'{site}: unsupported adapter; leave disabled') from None
-        searches[site] = adapter.validate_search({'url': source.search_url,
-                                                 'max_pages': str(source.max_pages)})
+        search = adapter.validate_search({'url': source.search_url,
+                                          'max_pages': str(source.max_pages)})
+        if source.search_urls:
+            search['urls'] = [adapter.validate_search({'url': url, 'max_pages': '1'})['url']
+                              for url in source.search_urls]
+        if w.search_text:
+            search['deep_scan'] = True
+            search['price_min'], search['price_max'] = w.min_price_eur, w.max_price_eur
+        searches[site] = search
     if watch_id is not None:
         get(conn, watch_id)
     conn.execute('BEGIN IMMEDIATE')

@@ -48,11 +48,11 @@ import json
 import random
 import re
 import time
-from collections.abc import Iterable
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 from subitoo.core.fetch import FetchContext
+from subitoo.core.scan import ScanListings
 from subitoo.core.models import Listing, SearchField
 from subitoo.sites.base import BaseSite
 from subitoo.registry import register
@@ -62,6 +62,7 @@ PAGE_SIZE = 96  # what the catalog page returns per page; not ours to set.
 #: Vinted stops paginating here (10 x 96). `total_pages` never exceeds it, so a search
 #: wider than ~960 results is trimmed by the site, not by us.
 MAX_SITE_PAGES = 10
+TIMEOUT = 30
 
 #: The header that turns a page request into a flight-payload request.
 RSC_HEADER = {"RSC": "1"}
@@ -244,12 +245,10 @@ class VintedSite(BaseSite):
 
     def validate_search(self, search: dict[str, Any]) -> dict[str, Any]:
         super().validate_search(search)  # required fields + the vinted URL check
-        mp = search.get("max_pages") or "1"
-        try:
-            if int(mp) < 1:
-                raise ValueError
-        except (TypeError, ValueError):
-            raise ValueError("vinted: 'max_pages' must be a positive integer") from None
+        mp = search.get("max_pages", "1")
+        if (isinstance(mp, bool) or not isinstance(mp, (str, int))
+                or not str(mp).isdecimal() or not 1 <= int(mp) <= 10):
+            raise ValueError("vinted: 'max_pages' must be an integer from 1 to 10")
         search["max_pages"] = str(int(mp))
         return search
 
@@ -260,19 +259,18 @@ class VintedSite(BaseSite):
         is here because arriving at a deep search URL with no cookies at all is the
         least browser-like way to show up.
         """
-        ctx.http.get(root)
+        response = ctx.http.get(root, timeout=TIMEOUT)
+        if response.status_code != 200:
+            from subitoo.core.recovery import HTTPFailure, retry_after_seconds
+            raise HTTPFailure('vinted', response.status_code,
+                              retry_after=retry_after_seconds(response.headers.get('Retry-After')))
 
     def _get_page(self, ctx: FetchContext, root: str, url: str) -> dict[str, Any]:
-        resp = ctx.http.get(url, headers=RSC_HEADER)
-        if resp.status_code in (401, 403):
-            self._warm(ctx, root)  # challenged mid-run — take the cookies and retry once
-            resp = ctx.http.get(url, headers=RSC_HEADER)
+        resp = ctx.http.get(url, headers=RSC_HEADER, timeout=TIMEOUT)
         if resp.status_code != 200:
-            snippet = resp.text[:200].replace("\n", " ")
-            raise RuntimeError(
-                f"vinted: {url} -> HTTP {resp.status_code} "
-                f"(a block/challenge, or a filter Vinted rejected?): {snippet!r}"
-            )
+            from subitoo.core.recovery import HTTPFailure, retry_after_seconds
+            raise HTTPFailure('vinted', resp.status_code,
+                              retry_after=retry_after_seconds(resp.headers.get('Retry-After')))
         if resp.headers.get("content-type", "").startswith("text/html"):
             raise RuntimeError(
                 f"vinted: {url} answered HTML, not a flight payload — the RSC header "
@@ -280,26 +278,51 @@ class VintedSite(BaseSite):
             )
         return extract_payload(resp.text)
 
-    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> Iterable[Listing]:
+    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> ScanListings:
+        search = self.validate_search(dict(search))
         url = search["url"]
         parts = urlsplit(url)
         root = f"{parts.scheme}://{parts.netloc}/"
-        max_pages = max(1, int(search.get("max_pages") or 1))
+        max_pages = int(search["max_pages"])
 
-        self._warm(ctx, root)
-        out: list[Listing] = []
+        warmed = getattr(ctx, "_warmed_roots", None)
+        if not isinstance(warmed, set) or root not in warmed:
+            self._warm(ctx, root)
+            if isinstance(warmed, set):
+                warmed.add(root)
+        out = ScanListings()
         time_pin: int | None = None
         for page_no in range(1, max_pages + 1):
             payload = self._get_page(ctx, root, page_url(url, page_no, time_pin))
-            out.extend(parse_items(payload, root))
+            items = parse_items(payload, root)
+            out.extend(items)
+            out.pages += 1
+            stop_page = getattr(ctx, "stop_page", None)
+            if callable(stop_page) and stop_page(items):
+                out.complete, out.reason = True, "end"
+                break
 
             pagination = payload.get("pagination") or {}
             # Page 1 hands us the snapshot id every later page must quote, or the
             # result set shifts under us as new listings arrive mid-run.
             time_pin = time_pin or pagination.get("time")
-            total_pages = min(pagination.get("total_pages") or 1, MAX_SITE_PAGES)
-            if page_no >= total_pages:
-                break  # last page — don't ask for empty ones
+            per_page = pagination.get("per_page") or PAGE_SIZE
+            total_pages = pagination.get("total_pages")
+            total_entries = pagination.get("total_entries")
+            native_end = total_pages is not None and page_no >= total_pages
+            site_cap = page_no >= MAX_SITE_PAGES
+            if ((native_end or site_cap) and total_entries is not None
+                    and total_entries > per_page * page_no):
+                out.reason = "site_limit"
+                break  # the site's advertised last page still excludes known results
+            # A short (even empty) page cannot override explicit remaining pages.
+            # Only infer an end from page length when pagination is unavailable.
+            if native_end or (total_pages is None and len(items) < per_page):
+                out.complete, out.reason = True, "end"
+                break
+            if site_cap:
+                out.reason = "site_limit"
+                break
             if page_no < max_pages:
                 time.sleep(random.uniform(2.5, 5.0))  # stay low: human pacing
         return out

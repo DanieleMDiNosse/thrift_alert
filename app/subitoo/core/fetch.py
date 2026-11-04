@@ -54,7 +54,7 @@ class HttpClient:
         return self._session
 
     def get(self, url: str, **kwargs):
-        kwargs.setdefault("timeout", 30)
+        kwargs.setdefault("timeout", 120)
         return self.session.get(url, **kwargs)
 
     def post(self, url: str, **kwargs):
@@ -155,7 +155,7 @@ class _CamoufoxPage:
 
     def goto(self, url: str, *, wait: float | None = None) -> None:
         """Navigate to ``url`` and settle for ``wait`` seconds (default ``wait_seconds``)."""
-        self._page.goto(url, wait_until="load", timeout=60_000)
+        self._page.goto(url, wait_until="load", timeout=120_000)
         self.wait(self._wait_seconds if wait is None else wait)
 
     def wait(self, seconds: float) -> None:

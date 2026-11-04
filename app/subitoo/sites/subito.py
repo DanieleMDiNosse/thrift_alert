@@ -23,14 +23,15 @@ fixtures with no network or browser (the adapter contract harness).
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
-from collections.abc import Iterable
 from datetime import datetime
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from subitoo.core.fetch import FetchContext
+from subitoo.core.scan import ScanListings
 from subitoo.core.models import Listing, SearchField
 from subitoo.sites.base import BaseSite
 from subitoo.registry import register
@@ -57,6 +58,48 @@ def _with_start(api_url: str, start: int) -> str:
     q = dict(parse_qsl(parts.query, keep_blank_values=True))
     q["start"] = str(start)
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(q), parts.fragment))
+
+
+def _with_query_from_page(api_url: str, page_url: str) -> str | None:
+    """Swap the search keyword ``q`` on an already-captured Hades API URL when
+    iterating over multiple phrases of the same multi-phrase search."""
+    page_q = dict(parse_qsl(urlsplit(page_url).query, keep_blank_values=True)).get("q")
+    if not page_q:
+        return None
+    parts = urlsplit(api_url)
+    pairs = [(k, page_q if k == "q" else v) for k, v in parse_qsl(parts.query, keep_blank_values=True)]
+    if not any(k == "q" for k, _ in pairs):
+        pairs.insert(0, ("q", page_q))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs), parts.fragment))
+
+
+def _with_prices(api_url: str, search: dict[str, Any]) -> str:
+    """Override only explicit price bounds; retain captured native URL filters."""
+    parts = urlsplit(api_url)
+    pairs = parse_qsl(parts.query, keep_blank_values=True)
+    overrides = {}
+    for key, native in (("price_min", "ps"), ("price_max", "pe")):
+        value = search.get(key)
+        if value is None:
+            continue
+        try:
+            number = float(value)
+            if isinstance(value, bool) or not math.isfinite(number) or number < 0:
+                raise ValueError
+        except (ValueError, TypeError, OverflowError):
+            raise ValueError(f"subito: invalid {key} price") from None
+        overrides[native] = format(number, ".15g")
+    effective = dict(pairs) | overrides
+    if "ps" in effective and "pe" in effective:
+        try:
+            if float(effective["ps"]) > float(effective["pe"]):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise ValueError("subito: price_min exceeds price_max or invalid price range") from None
+    if not overrides:
+        return api_url
+    query = [(k, v) for k, v in pairs if k not in overrides] + list(overrides.items())
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
 
 
 def _is_search_items(url: str) -> bool:
@@ -221,8 +264,9 @@ class SubitoSite(BaseSite):
 
     #: The user fine-tunes the search on Subito itself and pastes the resulting page
     #: URL; we let Subito build the API call (see ``resolve``). Everything Subito can
-    #: express (region, nearby, category, sort, keyword) lives in that URL; the
-    #: universal filters (price/shipping/title regex) are what Subito *can't* do.
+    #: express (region, nearby, category, sort, keyword) lives in that URL.
+    #: Explicit search price bounds also override ps/pe on the captured API URL;
+    #: local universal filters remain a final check.
     search_schema = [
         SearchField("url", "Subito search URL (paste from your browser's address bar)"),
         SearchField("max_pages", "Max pages to fetch (30 listings each)",
@@ -235,12 +279,10 @@ class SubitoSite(BaseSite):
 
     def validate_search(self, search: dict[str, Any]) -> dict[str, Any]:
         super().validate_search(search)  # required fields + the subito.it URL check
-        mp = search.get("max_pages") or "1"
-        try:
-            if int(mp) < 1:
-                raise ValueError
-        except (TypeError, ValueError):
-            raise ValueError("subito: 'max_pages' must be a positive integer") from None
+        mp = search.get("max_pages", "1")
+        if (isinstance(mp, bool) or not isinstance(mp, (str, int))
+                or not str(mp).isdecimal() or not 1 <= int(mp) <= 30):
+            raise ValueError("subito: 'max_pages' must be an integer from 1 to 30")
         search["max_pages"] = str(int(mp))
         return search
 
@@ -254,14 +296,27 @@ class SubitoSite(BaseSite):
             search["api_url"] = _capture_api_url(search["url"], ctx)
         return search
 
-    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> Iterable[Listing]:
+    def fetch(self, search: dict[str, Any], ctx: FetchContext) -> ScanListings:
+        search = self.validate_search(dict(search))
+        _with_prices("", search)  # reject invalid explicit bounds before browser work
         page_url = search["url"]
         # Re-resolve on the fly if the query was created without a resolve step
-        # (e.g. --from-json), or if we ever need to refresh a stale URL.
-        api_url = search.get("api_url") or _capture_api_url(page_url, ctx)
-        max_pages = max(1, int(search.get("max_pages") or 1))
+        # (e.g. --from-json), or reuse the captured Hades API template across phrases.
+        raw_api_url = search.get("api_url")
+        if not raw_api_url:
+            cached_template = getattr(ctx, "_subito_api_url", None)
+            if isinstance(cached_template, str):
+                raw_api_url = _with_query_from_page(cached_template, page_url)
+        if not raw_api_url:
+            raw_api_url = _capture_api_url(page_url, ctx)
+        try:
+            ctx._subito_api_url = raw_api_url
+        except AttributeError:
+            pass
+        api_url = _with_prices(raw_api_url, search)
+        max_pages = int(search["max_pages"])
 
-        out: list[Listing] = []
+        out = ScanListings()
         # One warmed browsing session, paged like a human — warm once, not per page.
         with ctx.browser.session(warm_url=page_url) as page:
             for page_no in range(max_pages):
@@ -277,8 +332,14 @@ class SubitoSite(BaseSite):
                     ) from e
                 items = parse_items(payload)
                 out.extend(items)
+                out.pages += 1
+                stop_page = getattr(ctx, "stop_page", None)
+                if callable(stop_page) and stop_page(items):
+                    out.complete, out.reason = True, "end"
+                    break
                 if len(items) < PAGE_SIZE:
-                    break  # short page => last page, stop early
+                    out.complete, out.reason = True, "end"
+                    break  # only an observed short page establishes the end
                 if page_no < max_pages - 1:
                     time.sleep(random.uniform(2.5, 5.0))  # stay low: human pacing
         return out

@@ -32,7 +32,7 @@ def connect(db_path: str | None = None) -> sqlite3.Connection:
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=15000")
     return conn
 
 
@@ -191,6 +191,11 @@ def reclaim_stale(conn, timeout: int, ts: int | None = None) -> list[int]:
         conn.execute(
             f"UPDATE queries SET status='error', status_changed_at=? WHERE id IN ({qmarks})",
             (ts, *ids),
+        )
+        conn.execute(
+            f"UPDATE runs SET status='error',finished_at=?,error_message=? "
+            f"WHERE status='running' AND query_id IN ({qmarks})",
+            (ts, 'InterruptedScan: scan interrupted before completion', *ids),
         )
     return ids
 

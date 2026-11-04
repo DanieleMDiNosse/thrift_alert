@@ -15,12 +15,12 @@ import secrets
 import sqlite3
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 from pydantic import ValidationError
 
 from subitoo.config import get_settings
-from subitoo.core import db, watches, descriptions
+from subitoo.core import db, watches, descriptions, recovery
 from subitoo.core.models import Notification
 
 ASSETS = Path(__file__).with_name('web')
@@ -55,8 +55,7 @@ def _safe_image(value):
     return None
 
 
-def _monitor_running():
-    path = Path(get_settings().db_path + '.dispatcher.lock')
+def _lock_held(path: Path) -> bool:
     try:
         with path.open('r') as handle:
             try:
@@ -69,12 +68,103 @@ def _monitor_running():
     return False
 
 
-def _state(conn):
+def _monitor_running():
+    return _lock_held(Path(get_settings().db_path + '.dispatcher.lock'))
+
+
+def _ai_worker_running():
+    resolved = Path(get_settings().db_path).expanduser().resolve()
+    return _lock_held(Path(str(resolved) + '.ai-worker.lock'))
+
+
+def _percentile(sorted_vals: list[float], q: float) -> float:
+    if len(sorted_vals) == 1:
+        return sorted_vals[0]
+    pos = (len(sorted_vals) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(sorted_vals) - 1)
+    frac = pos - lo
+    return sorted_vals[lo] * (1.0 - frac) + sorted_vals[hi] * frac
+
+
+def _price_distribution(prices: list[float]) -> dict | None:
+    if not prices:
+        return None
+    n = len(prices)
+    lo, hi = prices[0], prices[-1]
+    median = round(_percentile(prices, 0.5), 2)
+    p25 = round(_percentile(prices, 0.25), 2)
+    p75 = round(_percentile(prices, 0.75), 2)
+    mean = round(sum(prices) / n, 2)
+    if hi <= lo:
+        bins = [{'min': round(lo, 2), 'max': round(hi, 2), 'count': n}]
+    else:
+        n_bins = min(8, max(4, int(n ** 0.5) + 2)) if n >= 4 else n
+        step = (hi - lo) / n_bins
+        bins = []
+        for i in range(n_bins):
+            b_lo = lo + i * step
+            b_hi = hi if i == n_bins - 1 else lo + (i + 1) * step
+            bins.append({'min': round(b_lo, 2), 'max': round(b_hi, 2), 'count': 0})
+        for p in prices:
+            idx = min(n_bins - 1, max(0, int((p - lo) / step)))
+            bins[idx]['count'] += 1
+    return {
+        'count': n,
+        'currency': 'EUR',
+        'min': round(lo, 2),
+        'p25': p25,
+        'median': median,
+        'mean': mean,
+        'p75': p75,
+        'max': round(hi, 2),
+        'bins': bins,
+    }
+
+
+def _state(conn, listing_site=None, listing_offset=0, watch_id=None,
+           listing_order='balanced_recency', listing_q=None, listing_view='all'):
+    orders = {
+        'balanced_recency': 'site_position,site',
+        'price_asc': 'price IS NULL,currency,price ASC,last_seen_at DESC,site,site_listing_id',
+        'price_desc': 'price IS NULL,currency,price DESC,last_seen_at DESC,site,site_listing_id',
+    }
+    if listing_order not in orders:
+        raise ValueError('Invalid listing order')
+    if listing_view not in ('all', 'starred', 'hidden'):
+        raise ValueError('Invalid listing view')
+    q_pattern = None
+    if listing_q is not None:
+        cleaned = listing_q.strip()
+        if len(cleaned) > 120 or any(ord(c) < 32 for c in cleaned):
+            raise ValueError('Invalid listing search')
+        if cleaned:
+            escaped = re.sub(r'([%_\\])', r'\\\1', cleaned.lower())
+            q_pattern = f'%{escaped}%'
+        else:
+            listing_q = None
     groups = watches.list_all(conn)
     for group in groups:
         group['queries'] = []
         for query in watches.queries(conn, group['id']):
+            coverage = conn.execute('SELECT coverage_json,scanned_at,description_skipped FROM scan_coverage WHERE query_id=?', (query.id,)).fetchone()
+            attempt = conn.execute('SELECT status,started_at,finished_at,error_message FROM runs WHERE query_id=? ORDER BY id DESC LIMIT 1',(query.id,)).fetchone()
+            last_attempt = None
+            if attempt:
+                code = None
+                if attempt['status'] == 'error':
+                    code = recovery.classify(attempt['error_message'] or '').code
+                last_attempt = {'status':attempt['status'],'started_at':attempt['started_at'],
+                                'finished_at':attempt['finished_at'],'error_code':code}
             group['queries'].append({
+                'recovery': recovery.snapshot(conn, query.id),
+                'site_retry_at': recovery.site_retry_at(conn, query.site),
+                'description_pending': (conn.execute('SELECT pending_count FROM description_scans WHERE query_id=?',
+                                                     (query.id,)).fetchone() or [None])[0],
+                'coverage': json.loads(coverage[0]) if coverage else None,
+                'coverage_observed_at': coverage['scanned_at'] if coverage else None,
+                'description_skipped': coverage['description_skipped'] if coverage else 0,
+                'last_attempt': last_attempt,
                 'id': query.id, 'site': query.site, 'enabled': query.enabled,
                 'seeded': query.seeded, 'status': query.status.value,
                 'last_run_at': query.last_run_at,
@@ -82,10 +172,12 @@ def _state(conn):
                 'error': 'Scansione sospesa dopo un errore. Controlla accesso e URL prima di riprovare.'
                          if query.status.value == 'error' else None,
             })
-    rows = conn.execute('''
+    observed_base = '''
         WITH observed AS (
-            SELECT l.title,l.last_price AS price,l.currency,l.url,l.image_url,q.site,l.site_listing_id,l.raw_json,
+            SELECT l.id,l.title,l.last_price AS price,l.currency,l.url,l.image_url,q.site,l.site_listing_id,l.raw_json,
                    d.description AS cached_description,
+                   COALESCE(f.starred, 0) AS starred,
+                   COALESCE(f.hidden, 0) AS hidden,
                    COALESCE(w.name,q.name) AS watch_name,l.first_seen_at,l.last_seen_at,
                    ROW_NUMBER() OVER (PARTITION BY q.site,l.site_listing_id
                                       ORDER BY l.last_seen_at DESC,l.id DESC) AS position
@@ -93,15 +185,57 @@ def _state(conn):
             LEFT JOIN watch_sources s ON s.query_id=q.id
             LEFT JOIN watches w ON w.id=s.watch_id
             LEFT JOIN listing_descriptions d ON d.site=q.site AND d.site_listing_id=l.site_listing_id
+            LEFT JOIN listing_flags f ON f.site=q.site AND f.site_listing_id=l.site_listing_id
+            WHERE (? IS NULL OR s.watch_id=?)
+        ), deduped AS (SELECT * FROM observed WHERE position=1)
+    '''
+    flag_totals = conn.execute(
+        observed_base + ' SELECT COALESCE(SUM(CASE WHEN starred=1 AND hidden=0 THEN 1 ELSE 0 END),0) AS starred_n,'
+                        ' COALESCE(SUM(CASE WHEN hidden=1 THEN 1 ELSE 0 END),0) AS hidden_n FROM deduped',
+        (watch_id, watch_id),
+    ).fetchone()
+    observed = observed_base + ''',
+        unique_ads AS (
+            SELECT * FROM deduped
+            WHERE ((? = 'all' AND hidden = 0) OR (? = 'starred' AND starred = 1 AND hidden = 0) OR (? = 'hidden' AND hidden = 1))
+              AND (? IS NULL OR LOWER(title) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(cached_description, '')) LIKE ? ESCAPE '\\')
+        )
+    '''
+    filter_params = (watch_id, watch_id, listing_view, listing_view, listing_view, q_pattern, q_pattern, q_pattern)
+    counts = {row['site']: row['n'] for row in conn.execute(
+        observed + ' SELECT site,COUNT(*) AS n FROM unique_ads GROUP BY site', filter_params)}
+    for site in ('subito', 'vinted', 'wallapop'):
+        counts.setdefault(site, 0)
+    total = counts.get(listing_site, 0) if listing_site else sum(counts.values())
+    price_dist = None
+    if watch_id is not None:
+        price_rows = conn.execute(
+            observed
+            + " SELECT price FROM unique_ads WHERE (? IS NULL OR site=?)"
+              " AND price IS NOT NULL AND price > 0 AND COALESCE(currency, 'EUR') = 'EUR'"
+              " ORDER BY price ASC",
+            (*filter_params, listing_site, listing_site),
+        ).fetchall()
+        price_dist = _price_distribution([float(r['price']) for r in price_rows])
+    page_size = 40
+    listing_offset = min(listing_offset, max(0, ((total - 1) // page_size) * page_size))
+    # Balance the overview explicitly, not by accidental row order at equal scan
+    # timestamps. Within each site, most recently observed listings appear first.
+    rows = conn.execute(observed + '''
+        , ranked AS (
+            SELECT *,ROW_NUMBER() OVER(PARTITION BY site ORDER BY last_seen_at DESC,id DESC) AS site_position
+            FROM unique_ads WHERE (? IS NULL OR site=?)
         ) SELECT title,price,currency,url,image_url,site,site_listing_id,raw_json,cached_description,
-                 watch_name,first_seen_at,last_seen_at
-          FROM observed WHERE position=1 ORDER BY last_seen_at DESC LIMIT 40
-    ''').fetchall()
+                 starred,hidden,watch_name,first_seen_at,last_seen_at
+          FROM ranked ORDER BY ''' + orders[listing_order] + ''' LIMIT ? OFFSET ?
+    ''', (*filter_params, listing_site, listing_site, page_size, listing_offset)).fetchall()
     listings = []
     for row in rows:
         item = dict(row)
         raw = item.pop('raw_json')
         cached = item.pop('cached_description')
+        item['starred'] = bool(item.pop('starred', 0))
+        item['hidden'] = bool(item.pop('hidden', 0))
         item['url'] = _safe_link(item['url'])
         item['image_url'] = _safe_image(item['image_url'])
         item['description'] = cached if cached is not None else descriptions.native_description(item['site'], raw)
@@ -115,6 +249,14 @@ def _state(conn):
     except Exception:
         configured = False
     return {'watches': groups, 'listings': listings, 'monitor_running': _monitor_running(),
+            'ai_worker_running': _ai_worker_running(),
+            'listing_page': {'total': total, 'offset': listing_offset, 'limit': page_size,
+                             'has_more': listing_offset + len(listings) < total,
+                             'site_counts': counts, 'order': listing_order, 'watch_id': watch_id,
+                             'view': listing_view, 'q': listing_q or '',
+                             'starred_count': int(flag_totals['starred_n']),
+                             'hidden_count': int(flag_totals['hidden_n']),
+                             'price_distribution': price_dist},
             'notification_configured': configured, 'timezone': get_settings().tz}
 
 
@@ -160,21 +302,90 @@ class GUIHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if not self._guard():
             return
-        if self.path == '/api/state':
+        if urlsplit(self.path).path in {'/api/ai/worth', '/api/ai/review'}:
             try:
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, max_num_fields=4)
+                if set(params) != {'site', 'id'} or any(len(value) != 1 for value in params.values()):
+                    raise ValueError('Invalid listing identity')
+                if urlsplit(self.path).path == '/api/ai/review':
+                    from subitoo.ai.review import read
+                else:
+                    from subitoo.ai.worth import read
+                with closing(db.init_db()) as conn:
+                    conn.execute('BEGIN')
+                    result = read(conn, params['site'][0], params['id'][0])
+                    conn.commit()
+                self._reply(200, result)
+            except ValueError:
+                self._reply(400, {'error': 'Annuncio non disponibile o identità non valida.'})
+            except Exception:
+                self._reply(503, {'error': 'Giudizio non disponibile. Il monitor resta indipendente.'})
+            return
+        if urlsplit(self.path).path == '/api/ai/state':
+            try:
+                from subitoo.ai.service import snapshot
+                params = parse_qs(urlsplit(self.path).query, max_num_fields=4)
+                if any(len(values) != 1 for values in params.values()):
+                    raise ValueError('Duplicate query parameters')
+                category = params.get('category', [None])[0]
+                watch = params.get('watch_id', [None])[0]
+                if category is not None and not re.fullmatch(r'[a-z_]{1,40}', category):
+                    raise ValueError('Invalid category')
+                if watch is not None and not re.fullmatch(r'[1-9][0-9]{0,9}', watch):
+                    raise ValueError('Invalid watch')
+                with closing(db.init_db()) as conn:
+                    conn.execute('BEGIN')
+                    result = snapshot(conn, category=category, watch_id=int(watch) if watch else None)
+                    conn.commit()
+                self._reply(200, result)
+            except ValueError:
+                self._reply(400, {'error': 'Filtro AI non valido.'})
+            except Exception:
+                self._reply(503, {'error': 'Ricerca AI non disponibile. Il monitor resta indipendente.'})
+            return
+        if urlsplit(self.path).path == '/api/state':
+            try:
+                params = parse_qs(urlsplit(self.path).query, keep_blank_values=True, max_num_fields=6)
+                allowed_params = {'listing_site', 'listing_offset', 'watch_id', 'listing_order', 'listing_q', 'listing_view'}
+                if set(params) - allowed_params or any(len(v) != 1 for v in params.values()):
+                    raise ValueError('Invalid listing filters')
+                site = params.get('listing_site', [''])[0] or None
+                offset = params.get('listing_offset', ['0'])[0]
+                order = params.get('listing_order', ['balanced_recency'])[0]
+                watch = params.get('watch_id', [None])[0]
+                listing_q = params.get('listing_q', [None])[0]
+                listing_view = params.get('listing_view', ['all'])[0] or 'all'
+                if watch is not None and not re.fullmatch(r'[1-9][0-9]{0,9}', watch):
+                    raise ValueError('Invalid watch')
+                if site not in (None, 'subito', 'vinted', 'wallapop') or not re.fullmatch(r'[0-9]{1,9}', offset):
+                    raise ValueError('Invalid listing filters')
                 with closing(db.init_db()) as conn:
                     # One WAL snapshot across groups, sources and listings. A parallel
                     # delete/edit must not invalidate subsequent reads in this response.
                     conn.execute('BEGIN')
-                    state = _state(conn)
+                    state = _state(
+                        conn,
+                        listing_site=site,
+                        listing_offset=int(offset),
+                        watch_id=int(watch) if watch else None,
+                        listing_order=order,
+                        listing_q=listing_q,
+                        listing_view=listing_view,
+                    )
                     conn.commit()
                 self._reply(200, state)
+            except ValueError:
+                self._reply(400, {'error': 'Filtro annunci non valido.'})
             except sqlite3.Error:
                 self._reply(503, {'error': 'Database occupato o non disponibile. Riprova tra poco.'})
             return
         assets = {'/': ('index.html', 'text/html; charset=utf-8'),
                   '/static/app.js': ('app.js', 'text/javascript; charset=utf-8'),
-                  '/static/style.css': ('style.css', 'text/css; charset=utf-8')}
+                  '/static/style.css': ('style.css', 'text/css; charset=utf-8'),
+                  '/static/ai.js': ('ai.js', 'text/javascript; charset=utf-8'),
+                  '/static/ai.css': ('ai.css', 'text/css; charset=utf-8'),
+                  '/static/worth.js': ('worth.js', 'text/javascript; charset=utf-8'),
+                  '/static/worth.css': ('worth.css', 'text/css; charset=utf-8')}
         if self.path not in assets:
             self._reply(404, {'error': 'Pagina non trovata.'})
             return
@@ -182,6 +393,9 @@ class GUIHandler(BaseHTTPRequestHandler):
         text = (ASSETS / filename).read_text(encoding='utf-8')
         if filename == 'index.html':
             text = text.replace('__CSRF_TOKEN__', self.server.csrf_token)
+            from subitoo.ai.config import get_config
+            if get_config().workflow == 'on_demand':
+                text = text.replace('<section id="ai-assistant"', '<section id="ai-assistant" data-workflow="on_demand" hidden')
         self._reply(200, text, mime)
 
     def do_POST(self):
@@ -227,12 +441,25 @@ class GUIHandler(BaseHTTPRequestHandler):
             message = str(error)
             if 'running' in message:
                 self._reply(409, {'error': 'Scansione in corso. Attendi qualche istante e riprova.'})
+            elif self.path in {'/api/ai/worth', '/api/ai/review'} or self.path.startswith('/api/ai/'):
+                self._reply(400, {'error': message[:200]})
             else:
                 self._reply(400, {'error': 'Controlla gli URL e i filtri. ' + message[:200]})
         except Exception:
             self._reply(503, {'error': 'Operazione non riuscita. Controlla la configurazione locale e riprova.'})
 
     def _action(self, conn, data):
+        if self.path in {'/api/ai/worth', '/api/ai/review'}:
+            if set(data) - {'site', 'id', 'refresh'} or type(data.get('refresh', False)) is not bool:
+                raise ValueError('Richiesta di giudizio non valida.')
+            if self.path == '/api/ai/review':
+                from subitoo.ai.review import request
+            else:
+                from subitoo.ai.worth import request
+            return request(conn, data.get('site'), data.get('id'), refresh=data.get('refresh', False))
+        if self.path.startswith('/api/ai/'):
+            from subitoo.ai.service import action
+            return action(conn, self.path, data)
         if self.path in ('/api/watches/save', '/api/watches/quick-save'):
             spec = dict(data)
             watch_id = spec.pop('id', None)
@@ -263,9 +490,40 @@ class GUIHandler(BaseHTTPRequestHandler):
             qid = int(match[1])
             if db.get_query(conn, qid) is None:
                 raise LookupError
-            conn.execute("UPDATE queries SET status='pending',status_changed_at=? WHERE id=? AND status='error'",
-                         (db.now(), qid))
+            recovery.manual_retry(conn, qid)
             return {'ok': True}
+        if self.path == '/api/listings/flag':
+            if set(data) - {'site', 'id', 'starred', 'hidden'}:
+                raise ValueError('Richiesta non valida.')
+            site, identity = data.get('site'), data.get('id')
+            if site not in ('subito', 'vinted', 'wallapop') or not isinstance(identity, str) or not 1 <= len(identity) <= 200:
+                raise ValueError('Identità annuncio non valida.')
+            if 'starred' not in data and 'hidden' not in data:
+                raise ValueError('Specifica almeno un’azione.')
+            if ('starred' in data and type(data['starred']) is not bool) or ('hidden' in data and type(data['hidden']) is not bool):
+                raise ValueError('Valore non valido.')
+            if not conn.execute(
+                'SELECT 1 FROM listings l JOIN queries q ON q.id=l.query_id WHERE q.site=? AND l.site_listing_id=? LIMIT 1',
+                (site, identity),
+            ).fetchone():
+                raise LookupError
+            cur = conn.execute(
+                'SELECT starred, hidden FROM listing_flags WHERE site=? AND site_listing_id=?',
+                (site, identity),
+            ).fetchone()
+            starred = int(data['starred']) if 'starred' in data else (cur['starred'] if cur else 0)
+            hidden = int(data['hidden']) if 'hidden' in data else (cur['hidden'] if cur else 0)
+            if starred or hidden:
+                conn.execute(
+                    'INSERT OR REPLACE INTO listing_flags(site, site_listing_id, starred, hidden, updated_at) VALUES (?,?,?,?,?)',
+                    (site, identity, starred, hidden, db.now()),
+                )
+            else:
+                conn.execute(
+                    'DELETE FROM listing_flags WHERE site=? AND site_listing_id=?',
+                    (site, identity),
+                )
+            return {'ok': True, 'starred': bool(starred), 'hidden': bool(hidden)}
         if self.path == '/api/listings/description':
             site, identity = data.get('site'), data.get('id')
             if site not in ('subito', 'vinted', 'wallapop') or not isinstance(identity, str) or not 1 <= len(identity) <= 200:

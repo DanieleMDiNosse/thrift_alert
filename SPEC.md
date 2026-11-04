@@ -156,8 +156,11 @@ create → pending ──(due & enabled)──▶ running ──success──▶
 
 - `pending → running` is an **atomic conditional UPDATE** (`WHERE status='pending'`) — this
   doubles as the concurrency lock.
-- `error` is **latched** — excluded from scheduling until `query retry`. `enabled` (user
-  intent) is orthogonal to `status` (engine state).
+- `error` is excluded until its durable recovery deadline or `query retry`.
+  DNS/transport/timeouts/temporary server failures retry with exponential backoff.
+  HTTP 429 pauses the entire marketplace and respects Retry-After; 401/403,
+  CAPTCHA and invalid responses remain latched for review. `enabled` (user
+  intent) is orthogonal to `status` (engine state). See `core/recovery.py`.
 - **Watchdog:** each heartbeat, any `running` older than `RUN_TIMEOUT` is reclaimed → `error`.
 
 **Keys:**
@@ -239,8 +242,8 @@ pin this contract.
   `seeded`). **Seeded runs** classify each match: not seen → `new`; same price → unchanged
   (touch `last_seen_at`); different price → `price_change`. **Send-then-persist:** send
   first; on success persist + log `sent`; on failure log `failed` and **do not persist**, so
-  it re-classifies and retries next run (at-least-once). Failure of the whole fetch latches
-  the query to `error`. A per-query `run_delay_seconds` + fresh jitter paces seeded runs
+  it re-classifies and retries next run (at-least-once). Failure of the whole fetch moves
+  the query to `error`, with classified recovery as above. A per-query `run_delay_seconds` + fresh jitter paces seeded runs
   (the seed run bypasses it).
 
 **Same-heartbeat cross-query dedup.** Two overlapping queries (e.g. "iPhone in Veneto" and

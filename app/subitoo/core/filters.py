@@ -13,7 +13,8 @@ from subitoo.core.models import Filters, Listing
 
 
 def _passes(listing: Listing, f: Filters,
-            include_re: re.Pattern | None, exclude_re: re.Pattern | None) -> bool:
+            include_re: re.Pattern | None, exclude_re: re.Pattern | None,
+            description_re: re.Pattern | None) -> bool:
     # price range — listings with an unknown price (None) fail a range check.
     if f.price_min is not None or f.price_max is not None:
         if listing.price is None:
@@ -35,10 +36,17 @@ def _passes(listing: Listing, f: Filters,
     if exclude_re is not None and exclude_re.search(listing.title):
         return False
 
+    if description_re is not None:
+        # Adapters preserve descriptions in native payloads (Subito calls it body).
+        text = listing.raw.get('body' if 'body' in listing.raw else 'description')
+        if not isinstance(text, str) or not description_re.search(text):
+            return False
+
     return True
 
 
 def apply_filters(listings: Iterable[Listing], f: Filters) -> list[Listing]:
     include_re = re.compile(f.title_include, re.IGNORECASE) if f.title_include else None
     exclude_re = re.compile(f.title_exclude, re.IGNORECASE) if f.title_exclude else None
-    return [x for x in listings if _passes(x, f, include_re, exclude_re)]
+    description_re = re.compile(f.description_include, re.IGNORECASE | re.DOTALL) if f.description_include else None
+    return [x for x in listings if _passes(x, f, include_re, exclude_re, description_re)]

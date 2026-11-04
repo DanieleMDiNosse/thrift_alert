@@ -56,7 +56,7 @@ def test_browser_keeps_long_lists_compact_and_explains_missing_urls(gui):
         page = browser.new_page()
         page.goto(f"http://127.0.0.1:{gui.server_port}")
         expect(page.locator("#listings .listing")).to_have_count(8)
-        page.get_by_role("button", name="Mostra tutti (12)", exact=True).click()
+        page.get_by_role("button", name="Espandi pagina (12)", exact=True).click()
         expect(page.locator("#listings .listing")).to_have_count(12)
         page.get_by_role("button", name="Mostra meno", exact=True).click()
         expect(page.locator("#listings .listing")).to_have_count(8)
@@ -111,7 +111,7 @@ def test_browser_treats_saved_text_as_text_not_html(gui):
         dialogs = []
         page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
         page.goto(f'http://127.0.0.1:{gui.server_port}')
-        page.get_by_text(malicious['name'], exact=True).wait_for()
+        page.get_by_role('heading', name=malicious['name'], exact=True).wait_for()
         assert page.locator('img').count() == 0
         assert dialogs == []
         browser.close()

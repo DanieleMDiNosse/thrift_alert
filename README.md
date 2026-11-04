@@ -1,5 +1,54 @@
 # subitoo
 
+## Assistenza AI e Recensioni Prodotto ("Recensisci")
+
+Nella dashboard web, accanto a ciascun annuncio, è presente il pulsante **"Recensisci"**:
+- **On-Demand:** Nessuna analisi automatica a tappeto. L'AI viene interpellata **solo su richiesta dell'utente** con un clic, preservando token e chiamate.
+- **Sintesi tecnica e oggettiva:** Esegue una rapida ricerca di specifiche via DuckDuckGo (`ddgs`) ed elabora con **GPT-6.1-sol** (reasoning `low`) una recensione concisa (2–3 frasi, max 60 parole) con punto di forza, limite principale e per chi è adatto, identificando modello esatto, anno di uscita, stima del prezzo di listino/nuovo e (per le bici) trasmissione/guarnitura/rapporti.
+- **Cache locale:** I risultati vengono salvati nel database SQLite e conservati per 24 ore (`AI_WORTH_TTL_HOURS=24`).
+- Documentazione completa: [docs/WORTH_ASSISTANT.md](docs/WORTH_ASSISTANT.md) e [docs/GPT_RUNTIME.md](docs/GPT_RUNTIME.md).
+
+### Configurazione Provider AI (nel file `.env`)
+
+L'app supporta tre modalità di inferenza configurabili in `.env`:
+
+#### 1. Provider Hermes Codex OAuth (Consigliato se usi Hermes CLI)
+Non richiede chiavi API a pagamento né costi diretti a consumo, riutilizzando l'accesso OAuth Codex già autenticato in Hermes:
+```ini
+AI_PROVIDER=hermes
+AI_MODEL=gpt-6.1-sol
+AI_REASONING_EFFORT=low
+
+# Percorso alla cartella del profilo Hermes dove si trova auth.json
+# Es. profilo principale: /home/<utente>/.hermes
+# Es. profilo specifico:  /home/<utente>/.hermes/profiles/<nome_profilo>
+AI_HERMES_HOME=/home/<utente>/.hermes/profiles/<nome_profilo>
+
+# Percorso all'interprete Python dell'installazione Hermes
+AI_HERMES_PYTHON=/home/<utente>/.hermes/.../venv/bin/python
+```
+> **Come trovare i percorsi su un nuovo PC:**
+> - `AI_HERMES_HOME`: verifica dove risiede `auth.json` con `ls -la ~/.hermes/auth.json` oppure `ls -la ~/.hermes/profiles/*/auth.json`.
+> - `AI_HERMES_PYTHON`: dall'ambiente Hermes, esegui `python -c 'import sys; print(sys.executable)'`.
+
+#### 2. Provider OpenAI API Diretto
+Se preferisci usare una chiave API standard OpenAI:
+```ini
+AI_PROVIDER=openai
+AI_ENDPOINT=https://api.openai.com/v1
+AI_MODEL=gpt-6.1-sol
+AI_REASONING_EFFORT=low
+AI_API_KEY=sk-...  # La tua chiave API da https://platform.openai.com
+```
+
+#### 3. Modello Locale (llama.cpp / Ollama)
+Per eseguire un modello in locale senza connessione cloud:
+```ini
+AI_PROVIDER=local
+AI_ENDPOINT=http://127.0.0.1:8080/v1
+AI_MODEL=underdog-saluki-27b-iq2  # O l'alias del tuo modello
+```
+
 A self-hosted, **modular** marketplace scraper.
 
 ## Unified Marketplace Watch (this source branch)

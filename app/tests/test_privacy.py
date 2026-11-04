@@ -25,5 +25,22 @@ def test_http_timeout_is_bounded():
         def get(self, url, **kwargs): return kwargs
     client = HttpClient(Settings())
     client._session = Session()
-    assert client.get('https://example.com')['timeout'] == 30
+    assert client.get('https://example.com')['timeout'] == 120
     assert client.get('https://example.com', timeout=20)['timeout'] == 20
+
+
+def test_browser_navigation_timeout_is_two_minutes():
+    from subitoo.core.fetch import _CamoufoxPage
+
+    class Page:
+        def on(self, *args): pass
+        def goto(self, url, **kwargs):
+            self.options = kwargs
+        def wait_for_timeout(self, delay):
+            self.delay = delay
+
+    raw = Page()
+    page = _CamoufoxPage(raw, wait_seconds=6)
+    page.goto('https://example.com')
+    assert raw.options == {'wait_until': 'load', 'timeout': 120_000}
+    assert raw.delay == 6000

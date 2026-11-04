@@ -6,6 +6,7 @@
 data/
 backups/
 sessions/
+.ai-inference.lock
 *.cookies.json
 *.db
 *.db-wal

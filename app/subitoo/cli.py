@@ -264,6 +264,7 @@ _FILTER_PROMPTS: dict[str, tuple[str, str]] = {
     "shipping": ("shipping (any/yes/no)", "any"),
     "title_include": ("title_include (regex)", ""),
     "title_exclude": ("title_exclude (regex)", ""),
+    "description_include": ("description_include (regex)", ""),
 }
 
 
@@ -318,6 +319,7 @@ def _prompt_filters(adapter: BaseSite, current: Filters | None = None) -> Filter
         shipping=raw.get("shipping") or "any",
         title_include=raw.get("title_include") or None,
         title_exclude=raw.get("title_exclude") or None,
+        description_include=raw.get("description_include") or None,
     )
 
 
@@ -551,7 +553,12 @@ def query_retry(query_id: int) -> None:
     if q.status != QueryStatus.ERROR:
         console.print(f"[yellow]Query {query_id} is '{q.status.value}', not 'error' — nothing to do[/yellow]")
         return
-    db.set_status(conn, query_id, QueryStatus.PENDING)
+    from subitoo.core.recovery import manual_retry
+    try:
+        manual_retry(conn, query_id)
+    except ValueError as error:
+        console.print(f"[yellow]{error}[/yellow]")
+        raise typer.Exit(1) from None
     console.print(f"[green]Query {query_id} reset to pending[/green]")
 
 

@@ -94,3 +94,54 @@ def test_description_bound_to_requested_item_not_recommendations():
 def test_description_fetch_rejects_unsafe_or_wrong_item_url(url):
     from subitoo.core.descriptions import fetch_vinted_description
     with pytest.raises(ValueError): fetch_vinted_description(url,'321')
+
+
+def test_detail_follows_canonical_slug_then_rsc_redirect(monkeypatch):
+    from types import SimpleNamespace
+    from subitoo.core import descriptions
+    payload="1:"+json.dumps({"item_id":321,"description":"Testo reale"})
+    responses=[SimpleNamespace(status_code=307,headers={"location":"https://www.vinted.it/items/321-nuovo-titolo"}),
+               SimpleNamespace(status_code=307,headers={"location":"/items/321-nuovo-titolo?_rsc"}),
+               SimpleNamespace(status_code=200,headers={"content-type":"text/x-component"},content=payload.encode(),text=payload)]
+    calls=[]
+    def get(url,**kwargs):
+        calls.append(url); return responses.pop(0)
+    monkeypatch.setattr(descriptions,"build_context",lambda *a,**k:SimpleNamespace(http=SimpleNamespace(get=get)))
+    assert descriptions.fetch_vinted_description("https://www.vinted.it/items/321-fotocamera","321")=="Testo reale"
+    assert calls[-1]=="https://www.vinted.it/items/321-nuovo-titolo?_rsc"
+
+
+def test_endless_same_item_redirects_are_bounded(monkeypatch):
+    from types import SimpleNamespace
+    from subitoo.core import descriptions
+    calls=[]
+    def get(url,**kwargs):
+        calls.append(url); return SimpleNamespace(status_code=307,headers={"location":"/items/321-x"})
+    monkeypatch.setattr(descriptions,"build_context",lambda *a,**k:SimpleNamespace(http=SimpleNamespace(get=get)))
+    with pytest.raises(RuntimeError):
+        descriptions.fetch_vinted_description("https://www.vinted.it/items/321-fotocamera","321")
+    assert len(calls)==descriptions.MAX_ITEM_REDIRECTS+1
+
+
+def test_long_description_streamed_as_flight_text_row_is_resolved():
+    from subitoo.core.descriptions import parse_vinted_description
+    body='Prima riga è lunga\n\n1:{"finta":"riga"}\nfine'
+    text=('1:'+json.dumps({'data':{'item_id':'321','description':'$1a'}})+'\n'
+          +f'1a:T{len(body.encode()):x},'+body+'2:["$","div",null,{}]\n')
+    assert parse_vinted_description(text,'321')==body
+    assert parse_vinted_description('1:'+json.dumps({'item_id':'321','description':'$$5 euro'}),'321')=='$5 euro'
+    with pytest.raises(RuntimeError, match='unresolved'):
+        parse_vinted_description('1:'+json.dumps({'item_id':'321','description':'$ff'}),'321')
+
+
+def test_detail_requests_rsc_url_directly_in_one_hop(monkeypatch):
+    from types import SimpleNamespace
+    from subitoo.core import descriptions
+    payload="1:"+json.dumps({"item_id":321,"description":"Testo diretto"})
+    calls=[]
+    def get(url,**kwargs):
+        calls.append(url)
+        return SimpleNamespace(status_code=200,headers={"content-type":"text/x-component"},content=payload.encode(),text=payload)
+    monkeypatch.setattr(descriptions,"build_context",lambda *a,**k:SimpleNamespace(http=SimpleNamespace(get=get)))
+    assert descriptions.fetch_vinted_description("https://www.vinted.it/items/321-fotocamera","321")=="Testo diretto"
+    assert calls==["https://www.vinted.it/items/321-fotocamera?_rsc"]

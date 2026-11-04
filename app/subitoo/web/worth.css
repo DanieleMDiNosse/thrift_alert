@@ -1,0 +1,31 @@
+/* Inline advice deliberately spans a listing, never a separate ranking workspace. */
+.worth-assistant{grid-column:1/-1;min-width:0;width:100%;font-size:13px;color:var(--ink,#eef4fa);margin-top:2px}
+.worth-button{border:1px solid var(--line-strong,#35495e);border-radius:8px;background:var(--raised,#202f3d);color:var(--teal,#5eead4);padding:6px 12px;font:inherit;font-size:12px;font-weight:600;white-space:normal;text-align:left;min-height:32px;max-width:100%;cursor:pointer;transition:background-color .15s,border-color .15s}
+.worth-button:hover:not(:disabled){background:var(--bg,#0f1720);border-color:var(--teal,#5eead4)}
+.worth-button:disabled{opacity:.55;cursor:wait}
+.worth-button:focus-visible,.worth-sources a:focus-visible{outline:2px solid var(--teal,#5eead4);outline-offset:3px}
+.worth-panel{margin-top:10px;border:1px solid var(--line,#273747);border-left:3px solid var(--teal,#5eead4);background:var(--bg,#0f1720);border-radius:10px;padding:15px 16px;min-width:0;overflow-wrap:anywhere;line-height:1.6}
+.worth-panel[hidden]{display:none}
+.worth-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.worth-heading h4{font-size:13.5px;margin:0;font-weight:650}
+.worth-heading .worth-button{color:var(--muted,#98acb9);font-size:11.5px;padding:4px 9px;min-height:28px}
+.worth-panel p{margin:10px 0}
+.worth-message p{white-space:pre-wrap}
+.worth-status{color:var(--teal,#5eead4)}
+.worth-note,.worth-snapshot,.worth-retrieved{color:var(--muted,#98acb9);font-size:12px}
+.worth-specs{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 12px}
+.worth-spec{display:flex;flex-direction:column;gap:2px;background:var(--surface,#17222e);border:1px solid var(--line,#273747);border-radius:8px;padding:7px 11px;min-width:0}
+.worth-spec-label{font-size:10.5px;font-weight:600;color:var(--muted,#98acb9);text-transform:uppercase;letter-spacing:.5px}
+.worth-spec-value{font-size:13px;font-weight:650;color:var(--ink,#eef4fa);font-variant-numeric:tabular-nums}
+.worth-compare-links{display:inline-flex;gap:10px;align-items:center;font-size:12.5px;font-weight:600}
+.worth-compare-link{color:var(--teal,#5eead4);text-decoration:none}
+.worth-compare-link:hover{text-decoration:underline}
+.worth-new-price{font-weight:650}
+.worth-stale{color:#f3c978}
+.worth-error{color:var(--red,#fda4af)}
+.worth-quote{margin:10px 0;padding:4px 12px;border-left:2px solid var(--line-strong,#35495e);color:var(--muted,#98acb9);white-space:pre-wrap}
+.worth-panel h5{font-size:12px;margin:14px 0 5px}
+.worth-sources{padding-left:20px;margin:6px 0 14px}
+.worth-sources a{color:var(--blue,#93c5fd);text-decoration:underline}
+.worth-panel>.worth-button{margin:4px 10px 0 0}
+@media(max-width:600px){.worth-panel{padding:12px}.worth-heading{align-items:flex-start}.worth-retrieved{display:block}.worth-button{min-height:38px}}

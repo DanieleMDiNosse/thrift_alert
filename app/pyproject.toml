@@ -20,6 +20,8 @@ dependencies = [
 # Camoufox <-> Playwright version pin" section in SPEC.md before changing it.
 browser = ["playwright==1.53.0"]
 dev = ["pytest>=8.2"]
+# Optional free search provider; base monitoring remains unchanged.
+research = ["ddgs>=9,<10"]
 
 [project.scripts]
 subitoo = "subitoo.cli:app"

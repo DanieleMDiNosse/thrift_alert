@@ -61,7 +61,7 @@ def test_rejects_unsafe_or_unsupported_search(url):
         wallapop.WallapopSite().validate_search({"url": url})
 
 
-@pytest.mark.parametrize("pages", [0, -1, 6, True, 1.5, "1.5", "no"])
+@pytest.mark.parametrize("pages", [0, -1, 26, True, 1.5, "1.5", "no"])
 def test_page_bound_validated_before_network(pages):
     http = Http()
     with pytest.raises(ValueError, match="max_pages"):
@@ -88,7 +88,7 @@ def test_fixture_normalizes_and_bounded_request(payload):
     assert params["min_sale_price"] == ["0"]
     assert params["source"] == ["search_box"]
     assert params["filters_source"] == ["quick_filters"]
-    assert options["timeout"] == 20
+    assert options["timeout"] == 120
     assert options["allow_redirects"] is False
 
 

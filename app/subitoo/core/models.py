@@ -41,8 +41,9 @@ class Filters(BaseModel):
     shipping: Literal["any", "yes", "no"] = "any"
     title_include: str | None = None  # regex
     title_exclude: str | None = None  # regex
+    description_include: str | None = None  # regex, case-insensitive and multiline
 
-    @field_validator("title_include", "title_exclude")
+    @field_validator("title_include", "title_exclude", "description_include")
     @classmethod
     def _valid_regex(cls, v: str | None) -> str | None:
         if v:
@@ -56,6 +57,7 @@ class Filters(BaseModel):
 #: the fields of ``Filters`` above.
 UNIVERSAL_FILTERS: tuple[str, ...] = (
     "price_min", "price_max", "shipping", "title_include", "title_exclude",
+    "description_include",
 )
 
 
