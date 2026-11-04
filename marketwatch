@@ -4,8 +4,14 @@ set -euo pipefail
 umask 077
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
-if [[ ! -x app/.venv/bin/python ]]; then
+if [[ -x app/.venv/bin/python ]]; then
+    PY="app/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+    PY="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+    PY="$(command -v python)"
+else
     printf '%s\n' 'Missing app/.venv. See docs/OPERATIONS.md for source setup.' >&2
     exit 1
 fi
-exec app/.venv/bin/python -m subitoo.cli "$@"
+exec "$PY" -m subitoo.cli "$@"

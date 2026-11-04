@@ -24,7 +24,10 @@ jobs:
 
       - name: Install (fresh resolve, same as the image build)
         working-directory: app
-        run: pip install .[dev]
+        run: |
+          pip install .[dev,browser,research]
+          mkdir -p .venv/bin
+          ln -sf "$(which python)" .venv/bin/python
 
       - name: Run tests
         working-directory: app
