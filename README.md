@@ -1,4 +1,15 @@
-# subitoo
+# Thrift Alert
+
+Sistema self-hosted per il monitoraggio e la notifica di nuovi annunci su **Subito.it, Vinted e Wallapop**, con dashboard web locale e assistenza AI per recensioni tecniche on-demand.
+
+> **Riconoscimenti & Base del progetto:**
+> Questo progetto nasce ed è sviluppato come evoluzione del software open-source [subitoo](https://github.com/Kianda/subitoo) di **Kianda** (rilasciato sotto licenza GNU GPLv3).
+> Ringraziamo l'autore originale per l'ottima architettura iniziale (adattatori, scheduler, notifiche). Rispetto al progetto originario, **Thrift Alert** introduce:
+> - Supporto multisito unificato (**Subito.it**, **Vinted**, **Wallapop**)
+> - Gruppi di ricerca aggregati (**Watch Groups**) con deduplicazione globale durevole
+> - Dashboard web locale (**Marketwatch**) con supporto tema scuro e galleria foto
+> - Filtri avanzati sul corpo della descrizione e recupero asincrono
+> - Assistenza AI on-demand per recensioni tecniche oggettive (**"Recensisci"**) con supporto per Hermes Codex OAuth, OpenAI e modelli locali.
 
 ## Assistenza AI e Recensioni Prodotto ("Recensisci")
 
@@ -273,6 +284,6 @@ built-in lock means a search never overlaps itself.
   v2.0.0`); CI builds and publishes the images. Details in [`SPEC.md`](./SPEC.md) §12; the
   workflow needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repo secrets.
 
-## License
+## Licenza e Riconoscimenti
 
-subitoo is licensed under the GNU GPLv3 — see [`LICENSE`](./LICENSE).
+Questo progetto estende [subitoo](https://github.com/Kianda/subitoo) di Kianda ed è distribuito sotto licenza **GNU General Public License v3.0** (GPLv3) — consulta il file [`LICENSE`](./LICENSE) per i termini completi.

@@ -1,7 +1,7 @@
 [project]
 name = "subitoo"
 version = "0.1.0"
-description = "Modular multi-site marketplace scraper with scheduled queries and notifications"
+description = "Thrift Alert: modular multi-site marketplace watch & alert system with on-demand AI reviews (based on subitoo)"
 license = "GPL-3.0-or-later"
 requires-python = ">=3.11"
 dependencies = [
