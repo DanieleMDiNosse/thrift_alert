@@ -1,49 +1,137 @@
 # Thrift Alert
 
-Sistema self-hosted per il monitoraggio e la notifica di nuovi annunci su **Subito.it, Vinted e Wallapop**, con dashboard web locale e assistenza AI per recensioni tecniche on-demand.
+Sistema self-hosted per il monitoraggio e la notifica di nuovi annunci su **Subito.it, Vinted e Wallapop**, dotato di dashboard web locale in italiano e assistenza AI per recensioni tecniche del prodotto su richiesta.
 
-> **Riconoscimenti & Base del progetto:**
-> Questo progetto nasce ed è sviluppato come evoluzione del software open-source [subitoo](https://github.com/Kianda/subitoo) di **Kianda** (rilasciato sotto licenza GNU GPLv3).
+> **Riconoscimenti & Base del progetto:**  
+> Questo progetto nasce ed è sviluppato come evoluzione e fork del software open-source [subitoo](https://github.com/Kianda/subitoo) di **Kianda** (rilasciato sotto licenza GNU GPLv3).  
 > Ringraziamo l'autore originale per l'ottima architettura iniziale (adattatori, scheduler, notifiche). Rispetto al progetto originario, **Thrift Alert** introduce:
 > - Supporto multisito unificato (**Subito.it**, **Vinted**, **Wallapop**)
-> - Gruppi di ricerca aggregati (**Watch Groups**) con deduplicazione globale durevole
-> - Dashboard web locale (**Marketwatch**) con supporto tema scuro e galleria foto
-> - Filtri avanzati sul corpo della descrizione e recupero asincrono
+> - Ricerche aggregate multisito (**Watch Groups**) con deduplicazione globale durevole
+> - Dashboard web locale (**Marketwatch**) a `http://127.0.0.1:8787` con tema scuro e galleria immagini
+> - Filtri avanzati sul testo della descrizione e recupero asincrono schede
 > - Assistenza AI on-demand per recensioni tecniche oggettive (**"Recensisci"**) con supporto per Hermes Codex OAuth, OpenAI e modelli locali.
+
+---
+
+## Indice
+
+- [Caratteristiche principali](#caratteristiche-principali)
+- [Avvio Rapido](#avvio-rapido)
+- [Interfaccia Grafica e Gestione Ricerche](#interfaccia-grafica-e-gestione-ricerche)
+- [Assistenza AI e Recensioni Prodotto ("Recensisci")](#assistenza-ai-e-recensioni-prodotto-recensisci)
+- [Configurazione Notifiche (ntfy / Pushover)](#configurazione-notifiche)
+- [Filtri e Sintassi](#filtri-e-sintassi)
+- [Interfaccia a riga di comando (CLI)](#interfaccia-a-riga-di-comando-cli)
+- [Domande Frequenti (FAQ)](#domande-frequenti-faq)
+- [Licenza e Riconoscimenti](#licenza-e-riconoscimenti)
+
+---
+
+## Caratteristiche principali
+
+- **Monitoraggio multisito contemporaneo:** Controlla automaticamente annunci su **Subito.it**, **Vinted** e **Wallapop**.
+- **Frequenza personalizzabile:** Pianificazione su misura per ciascuna ricerca salvata (tramite espressioni cron).
+- **Notifiche push immediate:** Avvisi su smartphone (Android/iOS) con foto dell'annuncio, prezzo e link diretto.
+- **Deduplicazione durevole:** Nessuna doppia notifica se lo stesso articolo compare in ricerche o pianificazioni sovrapposte.
+- **Filtri universali:** Fascia di prezzo, spedizione presente/assente, parole obbligatorie o vietate nel titolo (tramite regex) e parole richieste nella descrizione.
+- **Dashboard web locale:** Interfaccia grafica completa per visualizzare gli annunci, gestire le ricerche e consultare le recensioni.
+- **Recensioni AI on-demand:** Ottieni con un solo clic una scheda tecnica, la stima del nuovo e un riassunto dei pregi/difetti del modello.
+
+---
+
+## Avvio Rapido
+
+### Installazione ed esecuzione locale (Consigliata)
+
+1. **Clona il repository e prepara l'ambiente Python:**
+   ```bash
+   cd subitoo
+   uv venv --python 3.12 app/.venv
+   uv pip sync --python app/.venv/bin/python requirements-ai.lock
+   uv pip install --python app/.venv/bin/python --no-deps -e ./app
+   app/.venv/bin/python -m playwright install firefox
+   ```
+
+2. **Configura le variabili d'ambiente:**
+   ```bash
+   cp .env.example .env
+   chmod 600 .env
+   ```
+   *Modifica il file `.env` per inserire il tuo canale di notifica (es. topic `ntfy`) ed eventualmente le impostazioni AI.*
+
+3. **Avvia il sistema con un unico comando:**
+   ```bash
+   ./start-local.sh
+   ```
+   Questo script avvia in background il monitor delle ricerche, l'interfaccia web e il worker AI.
+
+4. **Apri la dashboard nel browser:**
+   Vai su **http://127.0.0.1:8787** per visualizzare gli annunci e gestire le ricerche.
+
+Comandi di gestione rapida dello stack:
+```bash
+./start-local.sh status    # Controlla lo stato dei processi (monitor, GUI, worker)
+./start-local.sh stop      # Ferma tutti i servizi
+./start-local.sh restart   # Riavvia tutti i servizi ricaricando le configurazioni
+```
+
+---
+
+## Interfaccia Grafica e Gestione Ricerche
+
+L'interfaccia grafica (Marketwatch) ti permette di gestire tutto senza dover modificare file JSON:
+
+1. Premi **"＋ Nuova ricerca"**.
+2. Inserisci il nome della ricerca e cosa desideri cercare (è possibile inserire più varianti, una per riga).
+3. Imposta facoltativamente la fascia di prezzo minima e massima.
+4. Nelle **Opzioni avanzate** puoi selezionare quali marketplace includere, impostare parole da includere/escludere nel titolo e parole obbligatorie nella descrizione.
+5. Al salvataggio, la ricerca esegue una prima scansione silenziosa per stabilire la base di partenza; riceverai notifiche solo per i nuovi annunci trovati successivamente.
+
+Per chi preferisce la riga di comando, sono disponibili i comandi di `./marketwatch`:
+```bash
+./marketwatch doctor                                    # Diagnostica salute database, browser e notifiche
+./marketwatch watch add --from-json /percorso/file.json  # Aggiunge una ricerca da file JSON
+./marketwatch watch list                                # Elenca le ricerche attive
+./marketwatch watch test 1                              # Esegue una prova a secco senza inviare notifiche
+./marketwatch serve                                     # Avvia il monitor in primo piano
+```
+
+---
 
 ## Assistenza AI e Recensioni Prodotto ("Recensisci")
 
-Nella dashboard web, accanto a ciascun annuncio, è presente il pulsante **"Recensisci"**:
-- **On-Demand:** Nessuna analisi automatica a tappeto. L'AI viene interpellata **solo su richiesta dell'utente** con un clic, preservando token e chiamate.
-- **Sintesi tecnica e oggettiva:** Esegue una rapida ricerca di specifiche via DuckDuckGo (`ddgs`) ed elabora con **GPT-6.1-sol** (reasoning `low`) una recensione concisa (2–3 frasi, max 60 parole) con punto di forza, limite principale e per chi è adatto, identificando modello esatto, anno di uscita, stima del prezzo di listino/nuovo e (per le bici) trasmissione/guarnitura/rapporti.
-- **Cache locale:** I risultati vengono salvati nel database SQLite e conservati per 24 ore (`AI_WORTH_TTL_HOURS=24`).
-- Documentazione completa: [docs/WORTH_ASSISTANT.md](docs/WORTH_ASSISTANT.md) e [docs/GPT_RUNTIME.md](docs/GPT_RUNTIME.md).
+Accanto a ciascun annuncio nella dashboard è disponibile il pulsante **"Recensisci"**:
+- **Completamente on-demand:** Nessuna chiamata automatica in background. L'AI viene interpellata unicamente quando fai clic sul pulsante, evitando consumi indesiderati.
+- **Sintesi tecnica e oggettiva:** Effettua una veloce ricerca web di specifiche tecniche tramite DuckDuckGo (`ddgs`) ed elabora tramite **GPT-6.1-sol** (reasoning `low`) una recensione concisa (2–3 frasi, max 60 parole) con punto di forza, limite principale e destinatario ideale.
+- **Dati tecnici strutturati:** Riconosce il modello esatto, l'anno di uscita, la stima del prezzo di listino / nuovo e, per le biciclette, cambio, guarnitura e rapporto di trasmissione più agile.
+- **Cache su database:** Le recensioni vengono salvate nel database locale SQLite e rimangono valide per 24 ore (`AI_WORTH_TTL_HOURS=24`).
+- Documentazione tecnica dettagliata: consultare [docs/WORTH_ASSISTANT.md](docs/WORTH_ASSISTANT.md) e [docs/GPT_RUNTIME.md](docs/GPT_RUNTIME.md).
 
-### Configurazione Provider AI (nel file `.env`)
+### Configurazione del Provider AI (nel file `.env`)
 
-L'app supporta tre modalità di inferenza configurabili in `.env`:
+L'applicazione supporta tre modalità di inferenza:
 
 #### 1. Provider Hermes Codex OAuth (Consigliato se usi Hermes CLI)
-Non richiede chiavi API a pagamento né costi diretti a consumo, riutilizzando l'accesso OAuth Codex già autenticato in Hermes:
+Non richiede alcuna chiave API a pagamento né costi diretti: riutilizza l'accesso OAuth Codex già autenticato su Hermes:
 ```ini
 AI_PROVIDER=hermes
 AI_MODEL=gpt-6.1-sol
 AI_REASONING_EFFORT=low
 
-# Percorso alla cartella del profilo Hermes dove si trova auth.json
+# Percorso assoluto alla cartella del profilo Hermes dove si trova auth.json
 # Es. profilo principale: /home/<utente>/.hermes
 # Es. profilo specifico:  /home/<utente>/.hermes/profiles/<nome_profilo>
 AI_HERMES_HOME=/home/<utente>/.hermes/profiles/<nome_profilo>
 
-# Percorso all'interprete Python dell'installazione Hermes
+# Percorso assoluto all'interprete Python dell'installazione Hermes
 AI_HERMES_PYTHON=/home/<utente>/.hermes/.../venv/bin/python
 ```
-> **Come trovare i percorsi su un nuovo PC:**
-> - `AI_HERMES_HOME`: verifica dove risiede `auth.json` con `ls -la ~/.hermes/auth.json` oppure `ls -la ~/.hermes/profiles/*/auth.json`.
+> **Come trovare i percorsi corretti:**
+> - `AI_HERMES_HOME`: verifica dove si trova `auth.json` con `ls -la ~/.hermes/auth.json` o `ls -la ~/.hermes/profiles/*/auth.json`.
 > - `AI_HERMES_PYTHON`: dall'ambiente Hermes, esegui `python -c 'import sys; print(sys.executable)'`.
 
 #### 2. Provider OpenAI API Diretto
-Se preferisci usare una chiave API standard OpenAI:
+Se desideri utilizzare una chiave sviluppatore OpenAI tradizionale:
 ```ini
 AI_PROVIDER=openai
 AI_ENDPOINT=https://api.openai.com/v1
@@ -53,237 +141,110 @@ AI_API_KEY=sk-...  # La tua chiave API da https://platform.openai.com
 ```
 
 #### 3. Modello Locale (llama.cpp / Ollama)
-Per eseguire un modello in locale senza connessione cloud:
+Per eseguire un modello in locale senza connessione a servizi cloud:
 ```ini
 AI_PROVIDER=local
 AI_ENDPOINT=http://127.0.0.1:8080/v1
-AI_MODEL=underdog-saluki-27b-iq2  # O l'alias del tuo modello
+AI_MODEL=underdog-saluki-27b-iq2  # O l'alias del tuo modello locale
 ```
 
-A self-hosted, **modular** marketplace scraper.
+---
 
-## Unified Marketplace Watch (this source branch)
+## Configurazione Notifiche
 
-Subito, Vinted and Wallapop were live-fetched on this host; offline regression
-tests and controlled fixture-to-ntfy pushes are recorded in [docs/VALIDATION.md](docs/VALIDATION.md).
-Facebook is explicitly unsupported: no account/session automation is enabled.
-Android receipt still requires subscribing to the private topic and user confirmation.
+Puoi scegliere di ricevere le notifiche tramite **ntfy** (consigliato per semplicità) o **Pushover**. Quando viene individuato un nuovo annuncio, la notifica include il titolo, il prezzo, il mercatino di provenienza, l'immagine di anteprima e il link diretto all'annuncio.
 
-Prefer a graphical interface? Run `./marketwatch gui` to open the simple Italian
-local dashboard at http://127.0.0.1:8787. Manage watches without editing JSON; see
-[docs/GUI.md](docs/GUI.md). The GUI reuses the existing monitor, not a second scheduler.
+### Opzione 1: ntfy (Gratuito, nessun account richiesto)
+1. Installa l'app **ntfy** sul tuo smartphone ([Google Play](https://play.google.com/store/apps/details?id=io.heckel.ntfy) o [App Store](https://apps.apple.com/app/ntfy/id1625396347)).
+2. Scegli un nome per il tuo topic segreto (genera una stringa lunga e casuale, es. con `openssl rand -hex 16`).
+3. Iscriviti a quel topic all'interno dell'app.
+4. Configura il file `.env`:
+   ```ini
+   DEFAULT_CHANNEL=ntfy
+   NTFY_TOPIC=il_tuo_topic_segreto_e_casuale
+   NTFY_URL=https://ntfy.sh
+   ```
+   > ⚠️ **Attenzione:** Sul server pubblico `ntfy.sh`, chiunque conosca il nome del topic può leggere gli avvisi. Usa un nome lungo e difficile da indovinare.
 
-Use [docs/OPERATIONS.md](docs/OPERATIONS.md) for the verified source-local path,
-watch JSON schema/examples, start/stop, doctor, logs, backup and restore.
-Docker is optional and was unavailable on the validation host. No LLM or paid service
-is needed at runtime. Existing Docker commands below are retained for upstream users.
+### Opzione 2: Pushover
+1. Recupera la tua **USER_KEY** dalla home page di [Pushover](https://pushover.net).
+2. Crea una nuova applicazione su Pushover per ottenere un **APPLICATION_TOKEN**.
+3. Configura il file `.env`:
+   ```ini
+   DEFAULT_CHANNEL=pushover
+   PUSHOVER_USER=la_tua_user_key
+   PUSHOVER_TOKEN=il_tuo_token_applicazione
+   ```
 
-```sh
-./marketwatch doctor
-./marketwatch watch add --from-json /path/to/watch.json
-./marketwatch watch list
-./marketwatch watch test 1
-./marketwatch serve
+Verifica il corretto invio con:
+```bash
+./marketwatch notify test
 ```
 
-New queries default to **new-listing-only**; price changes are explicit opt-in via
-`notify_on_price_change`. Legacy queries retain their prior setting on migration.
-New-listing dedup is now durable by `(site, listing_id)` across different cron schedules.
-The first successfully scanning seeded group owns the alert; later groups record
-silently. Remote acceptance followed by a pre-commit crash remains at-least-once,
-not exactly-once. This supersedes the original same-heartbeat limitation below.
+---
 
-> 🛠️ Add a site or channel: [`CONTRIBUTING.md`](./CONTRIBUTING.md) · 📐 Design & rationale:
-> [`SPEC.md`](./SPEC.md)
+## Filtri e Sintassi
 
-## Requirements
+### Filtri sul Titolo (Espressioni Regolari - Regex)
+I filtri `title_include` e `title_exclude` usano espressioni regolari Python sul titolo dell'annuncio:
+- **Non fanno distinzione tra maiuscole e minuscole** (case-insensitive) e verificano la presenza del testo in qualsiasi punto del titolo.
+- `title_include`: mantiene solo gli annunci il cui titolo corrisponde al pattern.
+- `title_exclude`: scarta gli annunci che corrispondono al pattern.
+- Se un titolo soddisfa entrambi i criteri, **l'esclusione ha sempre la precedenza**.
 
-- [Docker](https://docs.docker.com/get-docker/)
-- For phone notifications — optional, and pick one: [ntfy](https://ntfy.sh) (no account, just install the app) or a [Pushover](https://pushover.net) account
+**Esempio pratico:**  
+Cercare modelli specifici di NAS Synology escludendo la versione "j" meno potente:
+- Includi: `DS ?124|DS ?220|DS ?223|DS ?218`
+- Escludi: `DS218j`
 
-## Features
+*Suggerimento: puoi testare i tuoi pattern regex su [regex101.com](https://regex101.com/) (selezionando Python come motore).*
 
-- Watch multiple marketplace sites — **Subito.it**, **Vinted** and **AutoScout24** (more coming soon...)
-- Per-query schedules (each saved search has its own cron)
-- Alerts on **new** matches and **price changes**
-- Universal filters: price range, shipping present/absent, title include/exclude (regex)
-- One notification per listing, with image + link
-- Overlapping searches are de-duplicated so you're pinged **once**, not twice
+### Filtri sulla Descrizione
+È possibile definire parole o frasi che devono comparire obbligatoriamente all'interno della descrizione dell'annuncio. Su Vinted, la descrizione completa viene recuperata e memorizzata in cache in modo asincrono.
 
-## Quick start
+---
+
+## Interfaccia a riga di comando (CLI)
+
+Se utilizzi l'ambiente a riga di comando:
 
 ```bash
-cp .env.example .env      # optional: set up notifications (see below)
-./start.sh                # pull the images + start everything, wait until healthy
-./subitoo query add       # create a search (interactive wizard)
-./subitoo query list      # see your searches
-./stop.sh                 # stop (your data in ./data is always preserved)
+# Gestione delle ricerche
+./marketwatch query add          # Creazione guidata interattiva di una ricerca
+./marketwatch query list         # Elenco delle ricerche salvate
+./marketwatch query show <id>    # Dettagli di una ricerca
+./marketwatch query edit <id>    # Modifica filtri o frequenza cron
+./marketwatch query enable <id>  # Abilita una ricerca
+./marketwatch query disable <id> # Disabilita/mette in pausa una ricerca
+./marketwatch query test <id>    # Prova a secco (mostra i risultati senza inviare notifiche)
+./marketwatch query rm <id>      # Elimina una ricerca
+
+# Monitoraggio e diagnostica
+./marketwatch doctor             # Verifica configurazione, database e notifiche
+./marketwatch listings <id>      # Mostra gli annunci memorizzati per una ricerca
+./marketwatch runs <id>          # Storico delle esecuzioni passate
+./marketwatch notify test        # Invia una notifica di prova
 ```
 
-`./start.sh` pulls pre-built images (`kianda/*` on Docker Hub), so every install runs the
-same build. Pin a version with `SUBITOO_VERSION` in `.env` (default `latest`). Once up,
-the scheduler runs due searches automatically.
+---
 
-| Script | What it does |
-|---|---|
-| `./start.sh` | Pull images + start, wait until healthy. Add `--dev` to build from source. |
-| `./stop.sh` | Stop the stack; your data in `./data` is kept. |
-| `./subitoo …` | Run any CLI command inside the container (`./subitoo query list`, etc.). |
+## Domande Frequenti (FAQ)
 
-**Tip:** symlink the wrapper onto your PATH — `ln -s "$PWD/subitoo" ~/.local/bin/subitoo` —
-then just `subitoo query list` from anywhere.
+**Perché non ricevo notifiche al primo avvio?**  
+Al primo avvio di una nuova ricerca, il sistema memorizza gli annunci esistenti come "stato iniziale" (baseline) in modo silenzioso. Inizierai a ricevere notifiche a partire dalle scansioni successive, solo quando compaiono annunci effettivamente nuovi o quando il prezzo varia (se abilitato).
 
-## Create a search
+**Se due ricerche diverse trovano lo stesso annuncio, ricevo due notifiche?**  
+No. Il sistema adotta una deduplicazione globale durevole basata sulla coppia `(marketplace, id_annuncio)`. La prima ricerca che rileva l'annuncio invia la notifica; le altre ricerche registrano il riferimento senza generare notifiche duplicate.
 
-`./subitoo query add` walks you through it:
+**Cosa succede se una scansione richiede più tempo del previsto?**  
+Ogni ricerca è protetta da un lock interno nel database: le esecuzioni della stessa ricerca non si sovrappongono mai.
 
-1. **Pick a site** — `subito`, `vinted` or `autoscout24`.
-2. **Paste the search URL.** Set up the keywords, category, region and sorting on the site
-   itself, then copy the URL from your browser's address bar. (Result pages to scan defaults
-   to 1 — that's 30 listings on Subito, 96 on Vinted, 20 on AutoScout24.)
-3. **Add filters** — price range, shipping, title include/exclude (regex). You're only
-   asked for the ones that apply to the site you picked — see below.
-4. **Set the schedule** — a cron expression (default: every 4 hours).
+**Dove vengono salvati i dati?**  
+Tutti i dati, la cronologia degli annunci e le recensioni AI sono memorizzati nel database locale SQLite in `./data/subitoo.db`. Per eseguire un backup è sufficiente copiare il database quando i processi sono fermi, oppure consultare [docs/OPERATIONS.md](docs/OPERATIONS.md) per i comandi di backup a caldo.
 
-The search runs once immediately to seed a silent baseline (this also confirms the URL
-works); you start getting alerts from the next run.
-
-### Which filters go where
-
-The sites draw the line in different places, because Subito's own price filter only
-appears once you pick a category while Vinted and AutoScout24 let you set everything up
-front:
-
-| | Subito.it | Vinted | AutoScout24 |
-|---|---|---|---|
-| **Price** | Subitoo's `price_min` / `price_max` | on Vinted — it rides along in the URL | on AutoScout24 — in the URL |
-| **Shipping** | Subitoo's `shipping` filter | n/a, every Vinted item ships | n/a, cars aren't shipped |
-| **Category, brand, size, condition** | in the pasted URL | in the pasted URL | make, model, year, km, gearbox, radius… in the pasted URL |
-| **Title regex** | Subitoo's `title_include` / `title_exclude` | same — the one thing neither site can express | same, matched on make + model + version |
-
-The wizard knows this and only asks what applies, so on Vinted and AutoScout24 it goes
-straight to the title regex and tells you what it skipped. Subitoo asks Vinted for the very page your URL
-describes, so whatever filters it carries are applied by Vinted itself and your results
-always match what the URL says.
-
-Vinted's search is fuzzy, though: on a narrow query it pads the results with loosely
-related items (a pair of boots in a "meta quest" search). Those are genuine results — your
-own browser shows you the same page — so `title_include` is how you cut them out.
-
-On AutoScout24, sort the search by **most recent** before copying the URL: listings carry
-no publication date, so that sort order is what keeps new cars on the first page. Paste the
-URL from the address bar rather than typing one — AutoScout24 silently drops parameters it
-doesn't recognise.
-
-Need a bound tighter than your URL's — €150 under a URL that says €200? The core still
-applies every filter on every site, so set it with `query add --from-json`.
-
-### Title filters (regex)
-
-`title_include` / `title_exclude` are Python regexes matched against the listing **title**:
-
-- **Case-insensitive**, and matched **anywhere in the title** — `iphone` matches
-  "Apple iPhone 13". Anchor with `^` / `$` if you need the whole title.
-- `title_include` keeps only matching listings; `title_exclude` drops matching ones.
-  If both match, **exclude wins**.
-- Blank = filter off. An invalid pattern is rejected when you create the search.
-
-Example (on Subito, where the price filter is Subitoo's) — Synology NAS between €75 and
-€150, only the models you want, minus the cut-down one:
-
-```
-  price_min             75
-  price_max             150
-  title_include (regex) DS ?124|DS ?220|DS ?223|DS ?218
-  title_exclude (regex) DS218j
-```
-
-`|` is "or", `DS ?124` allows an optional space ("DS124" and "DS 124" both match). Note
-that `DS ?218` also matches "DS218j" — the exclude is what filters it back out.
-
-**Tip:** test a pattern on [regex101.com](https://regex101.com/) (flavor: Python, flag
-`i`) before saving the search.
-
-## CLI
-
-Run via the wrapper (`./subitoo <cmd>`):
-
-```
-query add [--from-json f]    # create a search (wizard or JSON)
-query edit <id>              # change filters, cron, name or pacing (not the URL)
-query list | show <id>       # inspect
-query enable|disable <id>    # pause switch
-query retry <id>             # clear an 'error' latch -> pending
-query rm <id>                # delete
-query test <id>              # dry run: fetch + filter, no notify/persist
-run <id> [--dry-run]         # run one search now
-runs <id> | listings <id>    # history / seen items
-sites | notifiers            # list installed plugins
-doctor                       # health check (DB, plugins, browser, channel)
-notify test                  # send a test notification
-```
-
-`subitoo --help` documents everything.
-
-## Notifications
-
-**Pushover** and **ntfy** ship in-box. One channel is active at a time — pick it with
-`DEFAULT_CHANNEL` in `.env` and verify with `./subitoo notify test`. Adding another is a
-single file (see [`CONTRIBUTING.md`](./CONTRIBUTING.md)).
-
-Either way an alert carries the listing's image, and tapping it opens the listing.
-
-### Pushover
-
-Grab your **USER_KEY** from the [Pushover homepage](https://pushover.net) and an
-**APPLICATION_TOKEN** from a [new Pushover app](https://pushover.net/apps/build), then put
-them in `.env`:
-
-```ini
-DEFAULT_CHANNEL=pushover
-PUSHOVER_USER=your_user_key
-PUSHOVER_TOKEN=your_app_token
-```
-
-### ntfy
-
-Install [ntfy](https://ntfy.sh) on your phone, subscribe to a topic, and name that topic
-in `.env`. No account needed:
-
-```ini
-DEFAULT_CHANNEL=ntfy
-NTFY_TOPIC=subitoo-3f9c1ab74e2d
-```
-
-⚠️ **The topic name is the password.** On the public ntfy.sh server anyone who knows it
-can read your alerts and post to them, so use a long random one — `NTFY_TOPIC=nas` is
-effectively public. Self-hosting instead? Set `NTFY_URL` to your server, and `NTFY_TOKEN`
-if the topic is access-controlled.
-
-## FAQ
-
-**Why no notifications on the first run?** By design — the first run just records the
-current matches as a baseline. You get alerts from the next run onward, when something is
-new or changes price.
-
-**Will overlapping searches double-notify me?** New-listing events are now persisted
-globally by marketplace and listing ID, including across different schedules and normal
-restarts. The first successfully scanning seeded group sends; later matches are silent.
-Price-change opt-in keeps upstream per-query semantics.
-
-**What if the scheduler fires while a previous run is still going?** It's skipped — a
-built-in lock means a search never overlaps itself.
-
-**Where is my data?** In `./data` (SQLite DB). Back it up to avoid losing your history.
-
-## Contributing & design
-
-- **Add a site or notification channel:** [`CONTRIBUTING.md`](./CONTRIBUTING.md).
-- **Architecture, decisions, and the browser/Playwright version pin:** [`SPEC.md`](./SPEC.md).
-- **Cutting a release (maintainer):** push a semver tag (`git tag v2.0.0 && git push origin
-  v2.0.0`); CI builds and publishes the images. Details in [`SPEC.md`](./SPEC.md) §12; the
-  workflow needs the `DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN` repo secrets.
+---
 
 ## Licenza e Riconoscimenti
 
-Questo progetto estende [subitoo](https://github.com/Kianda/subitoo) di Kianda ed è distribuito sotto licenza **GNU General Public License v3.0** (GPLv3) — consulta il file [`LICENSE`](./LICENSE) per i termini completi.
+Questo software estende il progetto open-source [subitoo](https://github.com/Kianda/subitoo) di Kianda ed è distribuito sotto licenza **GNU General Public License v3.0** (GPLv3).  
+Per consultare i termini e le condizioni complete di distribuzione, vedi il file [`LICENSE`](./LICENSE).
